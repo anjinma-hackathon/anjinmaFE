@@ -1,7 +1,12 @@
 // API 엔드포인트 및 Socket.io 연결 유틸리티
 
-let API_BASE_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, '') || ''; // 마지막 슬래시 제거
-let SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL?.replace(/\/$/, '') || ''; // 마지막 슬래시 제거
+// 빌드 시에는 환경 변수가 없을 수 있으므로 기본값 설정
+let API_BASE_URL = (typeof window !== 'undefined' 
+  ? process.env.NEXT_PUBLIC_API_URL 
+  : process.env.NEXT_PUBLIC_API_URL || process.env.API_URL)?.replace(/\/$/, '') || ''; // 마지막 슬래시 제거
+let SOCKET_URL = (typeof window !== 'undefined'
+  ? process.env.NEXT_PUBLIC_SOCKET_URL
+  : process.env.NEXT_PUBLIC_SOCKET_URL)?.replace(/\/$/, '') || ''; // 마지막 슬래시 제거
 
 // 개발 환경에서 프록시 사용 여부 결정
 const USE_PROXY = process.env.NEXT_PUBLIC_USE_PROXY === 'true' || false;
@@ -36,12 +41,19 @@ if (!USE_PROXY) {
   }
 }
 
-// 환경 변수 확인 헬퍼 함수 (런타임에만 체크 - 빌드 타임에는 실행되지 않음)
+// 환경 변수 확인 헬퍼 함수 (런타임에만 체크 - 브라우저 환경에서만 실행)
 function ensureApiConfig() {
+  // 빌드 타임에는 실행하지 않음
+  if (typeof window === 'undefined') {
+    return;
+  }
+  
   if (!API_BASE_URL && !USE_PROXY) {
+    console.error('[API] NEXT_PUBLIC_API_URL 환경 변수가 설정되지 않았습니다.');
     throw new Error('NEXT_PUBLIC_API_URL 환경 변수가 설정되지 않았습니다.');
   }
   if (!SOCKET_URL && !USE_PROXY) {
+    console.error('[API] NEXT_PUBLIC_SOCKET_URL 환경 변수가 설정되지 않았습니다.');
     throw new Error('NEXT_PUBLIC_SOCKET_URL 환경 변수가 설정되지 않았습니다.');
   }
 }

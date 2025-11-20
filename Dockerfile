@@ -17,7 +17,15 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 # Next.js 빌드 (Standalone 모드)
+# 빌드 시 환경 변수는 선택사항 (런타임에 설정될 수 있음)
 ENV NEXT_TELEMETRY_DISABLED 1
+# 빌드 시 환경 변수가 없어도 빌드가 성공하도록 설정
+ARG NEXT_PUBLIC_API_URL=""
+ARG NEXT_PUBLIC_SOCKET_URL=""
+ARG NEXT_PUBLIC_USE_PROXY="false"
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_SOCKET_URL=$NEXT_PUBLIC_SOCKET_URL
+ENV NEXT_PUBLIC_USE_PROXY=$NEXT_PUBLIC_USE_PROXY
 RUN npm run build
 
 # 프로덕션 실행 단계

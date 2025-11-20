@@ -28,20 +28,39 @@
 
 Coolify 대시보드에서 다음 환경 변수를 설정하세요:
 
+**중요**: Next.js는 빌드 시 `NEXT_PUBLIC_*` 환경 변수를 번들에 포함시킵니다. 따라서 **빌드 단계와 런타임 단계 모두에서 환경 변수를 설정해야 합니다**.
+
 ### 필수 환경 변수
+
+#### 빌드 시 필요한 환경 변수 (Build-time)
+```env
+NEXT_PUBLIC_API_URL=http://your-backend-url:3001
+NEXT_PUBLIC_SOCKET_URL=http://your-backend-url:3001
+NEXT_PUBLIC_USE_PROXY=false
+```
+
+#### 런타임 환경 변수 (Runtime)
 ```env
 NODE_ENV=production
 NEXT_PUBLIC_API_URL=http://your-backend-url:3001
 NEXT_PUBLIC_SOCKET_URL=http://your-backend-url:3001
+API_URL=http://your-backend-url:3001  # 프록시 사용 시 필요
+NEXT_PUBLIC_USE_PROXY=false
 ```
 
 ### 환경 변수 설정 방법
+
 1. Coolify 대시보드에서 애플리케이션 선택
 2. "Environment Variables" 섹션으로 이동
-3. 각 환경 변수를 추가:
-   - `NODE_ENV` = `production`
+3. **빌드 시 사용할 환경 변수** 설정:
    - `NEXT_PUBLIC_API_URL` = 백엔드 API URL
    - `NEXT_PUBLIC_SOCKET_URL` = Socket.io 서버 URL
+   - `NEXT_PUBLIC_USE_PROXY` = `false` (프록시 사용 시 `true`)
+4. **런타임 환경 변수**도 동일하게 설정:
+   - `NODE_ENV` = `production`
+   - `API_URL` = 백엔드 API URL (프록시 사용 시 필수)
+   
+**참고**: Coolify에서 환경 변수를 설정하면 빌드 단계와 런타임 단계 모두에서 사용할 수 있습니다.
 
 ## 4. 빌드 및 배포
 
