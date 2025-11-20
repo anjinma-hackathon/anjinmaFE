@@ -36,12 +36,14 @@ if (!USE_PROXY) {
   }
 }
 
-if (!API_BASE_URL && !USE_PROXY) {
-  throw new Error('NEXT_PUBLIC_API_URL 환경 변수가 설정되지 않았습니다.');
-}
-
-if (!SOCKET_URL && !USE_PROXY) {
-  throw new Error('NEXT_PUBLIC_SOCKET_URL 환경 변수가 설정되지 않았습니다.');
+// 환경 변수 확인 헬퍼 함수 (런타임에만 체크 - 빌드 타임에는 실행되지 않음)
+function ensureApiConfig() {
+  if (!API_BASE_URL && !USE_PROXY) {
+    throw new Error('NEXT_PUBLIC_API_URL 환경 변수가 설정되지 않았습니다.');
+  }
+  if (!SOCKET_URL && !USE_PROXY) {
+    throw new Error('NEXT_PUBLIC_SOCKET_URL 환경 변수가 설정되지 않았습니다.');
+  }
 }
 
 // 디버깅용: 환경 변수 확인 (개발 환경에서만)
@@ -109,6 +111,7 @@ export interface TranslationResponse {
 
 // 1. 교수 화면에서 현재 입장 학생 목록 조회
 export async function getAttendance(roomId: number): Promise<AttendanceResponse> {
+  ensureApiConfig();
   try {
     const url = getApiUrl(`rooms/${roomId}/attendance`);
     console.log('[API] GET Attendance:', url);
@@ -136,6 +139,7 @@ export async function getAttendance(roomId: number): Promise<AttendanceResponse>
 
 // 2. 방 생성
 export async function createRoom(data: CreateRoomRequest): Promise<CreateRoomResponse> {
+  ensureApiConfig();
   try {
     const url = getApiUrl('rooms');
     console.log('[API] POST Create Room:', url, data);
@@ -175,6 +179,7 @@ export async function createRoom(data: CreateRoomRequest): Promise<CreateRoomRes
 
 // 3. 방 정보 조회
 export async function getRoomInfo(roomId: number): Promise<RoomInfoResponse> {
+  ensureApiConfig();
   try {
     const url = getApiUrl(`rooms/${roomId}`);
     console.log('[API] GET Room Info:', url);
@@ -202,6 +207,7 @@ export async function getRoomInfo(roomId: number): Promise<RoomInfoResponse> {
 
 // 4. 코드로 입장 (교수/학생 모두 사용)
 export async function joinRoomByCode(code: string): Promise<JoinRoomResponse> {
+  ensureApiConfig();
   try {
     const url = getApiUrl(`rooms/join?code=${encodeURIComponent(code)}`);
     console.log('[API] GET Join Room:', url);
@@ -236,6 +242,7 @@ export async function joinRoomByCode(code: string): Promise<JoinRoomResponse> {
 
 // STT 텍스트를 백엔드로 전송
 export async function sendSttText(data: SttRequest): Promise<TranslationResponse> {
+  ensureApiConfig();
   try {
     const url = getApiUrl(`api/stt/translate`);
     console.log('[API] POST Send STT Text:', url, data);

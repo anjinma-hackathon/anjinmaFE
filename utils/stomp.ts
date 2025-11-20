@@ -100,13 +100,21 @@ export function initStompClient(config: StompConfig): Client {
     
     // 백엔드 서버가 WebSocket을 지원하는지, URL이 올바른지 확인 필요
     console.error('[STOMP] ========== WebSocket 연결 실패 ==========');
+    console.error('[STOMP] 연결 실패 URL:', wsUrl);
     console.error('[STOMP] 연결 실패 가능 원인:');
-    console.error('[STOMP] 1. 백엔드 서버가 WebSocket 연결을 허용하지 않음');
-    console.error('[STOMP] 2. WebSocket URL이 잘못됨:', wsUrl);
-    console.error('[STOMP] 3. 백엔드가 SockJS를 사용 중일 수 있음');
-    console.error('[STOMP] 4. 방화벽 또는 프록시가 WebSocket 연결을 차단');
+    console.error('[STOMP] 1. 백엔드 서버가 네이티브 WebSocket을 지원하지 않음 (SockJS만 지원 가능)');
+    console.error('[STOMP] 2. 백엔드 CORS 설정이 WebSocket Upgrade 요청을 허용하지 않음');
+    console.error('[STOMP] 3. WebSocket 엔드포인트 경로가 잘못됨 (현재: ' + config.wsEndpoint + ')');
+    console.error('[STOMP] 4. 리버스 프록시(nginx/Apache)가 WebSocket 연결을 차단');
     console.error('[STOMP] 5. SSL/TLS 인증서 문제');
-    console.error('[STOMP] 6. 백엔드 CORS 설정이 WebSocket을 허용하지 않음');
+    console.error('[STOMP] 6. 백엔드 서버가 다운되었거나 접근 불가');
+    console.error('[STOMP]');
+    console.error('[STOMP] 🔍 백엔드 개발자에게 확인 요청:');
+    console.error('[STOMP] - 네이티브 WebSocket 지원 여부 확인');
+    console.error('[STOMP] - WebSocket 엔드포인트 경로 확인: ' + config.wsEndpoint);
+    console.error('[STOMP] - CORS 설정 확인 (WebSocket Upgrade 포함)');
+    console.error('[STOMP] - 리버스 프록시 WebSocket 설정 확인');
+    console.error('[STOMP] - 서버 로그에서 연결 시도 기록 확인');
     console.error('[STOMP] =========================================');
     
     // 사용자에게 알림 (브라우저 환경에서만)
