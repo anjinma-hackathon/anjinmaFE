@@ -10,7 +10,7 @@
 
 ## 2. Coolify에서 프로젝트 생성
 
-### 2.1 새 리소스 생성
+### 2.1 새 리소스 생성.
 1. Coolify 대시보드에 로그인
 2. "New Resource" 클릭
 3. "Application" 선택
