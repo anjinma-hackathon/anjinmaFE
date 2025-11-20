@@ -28,7 +28,7 @@ export function initStompClient(config: StompConfig): Client {
   }
 
   // WebSocket URL 구성 (wsEndpoint 사용)
-  // HTTP를 WSS로, HTTPS를 WSS로 변환
+  // Spring Boot STOMP는 일반적으로 /ws/lecture와 같은 경로를 사용
   let wsUrl = `${SOCKET_URL}${config.wsEndpoint}`;
   
   // HTTP를 WS로 변환
@@ -40,17 +40,29 @@ export function initStompClient(config: StompConfig): Client {
   
   // 기본 프로토콜이 없으면 wss:// 추가
   if (!wsUrl.startsWith('ws://') && !wsUrl.startsWith('wss://')) {
-    wsUrl = `wss://${wsUrl}`;
+    // HTTPS를 사용 중이면 WSS, 아니면 WS 사용
+    if (SOCKET_URL.startsWith('https://')) {
+      wsUrl = `wss://${wsUrl}`;
+    } else {
+      wsUrl = `ws://${wsUrl}`;
+    }
   }
   
-  console.log('[STOMP] WebSocket URL:', wsUrl);
+  console.log('[STOMP] Initializing WebSocket connection...');
+  console.log('[STOMP] SOCKET_URL:', SOCKET_URL);
+  console.log('[STOMP] wsEndpoint:', config.wsEndpoint);
+  console.log('[STOMP] Final WebSocket URL:', wsUrl);
 
-  // 네이티브 WebSocket 사용 (SockJS 대신)
+  // 네이티브 WebSocket 사용
+  // Spring Boot STOMP는 네이티브 WebSocket도 지원하지만, 
+  // 연결이 실패하면 백엔드 설정을 확인해야 함
   stompClient = new Client({
     brokerURL: wsUrl,
     reconnectDelay: 5000,
     heartbeatIncoming: 4000,
     heartbeatOutgoing: 4000,
+    // 연결 시도 횟수 제한
+    connectionTimeout: 10000,
     debug: (str: string) => {
       if (process.env.NODE_ENV === 'development') {
         console.log('[STOMP]', str);
@@ -59,18 +71,49 @@ export function initStompClient(config: StompConfig): Client {
   });
 
   stompClient.onConnect = (frame) => {
-    console.log('[STOMP] Connected:', frame);
+    console.log('[STOMP] Connected successfully:', frame);
     // 연결 완료 시 등록된 콜백 실행
     connectCallbacks.forEach(callback => callback());
     connectCallbacks.length = 0; // 콜백 배열 초기화
   };
 
   stompClient.onStompError = (frame) => {
-    console.error('[STOMP] Error:', frame);
+    console.error('[STOMP] STOMP Error:', frame);
+    console.error('[STOMP] Error details:', frame.headers);
+    console.error('[STOMP] Error message:', frame.body);
   };
 
   stompClient.onWebSocketError = (event: any) => {
-    console.error('[STOMP] WebSocket Error:', event);
+    console.error('[STOMP] WebSocket Error occurred');
+    console.error('[STOMP] Error event:', event);
+    console.error('[STOMP] Error type:', event?.type);
+    console.error('[STOMP] Error target:', event?.target);
+    
+    // WebSocket 연결 실패 시 더 자세한 정보 제공
+    if (event?.target) {
+      const ws = event.target as WebSocket;
+      console.error('[STOMP] WebSocket readyState:', ws?.readyState);
+      console.error('[STOMP] WebSocket URL:', ws?.url);
+      console.error('[STOMP] WebSocket protocol:', ws?.protocol);
+      console.error('[STOMP] WebSocket extensions:', ws?.extensions);
+    }
+    
+    // 백엔드 서버가 WebSocket을 지원하는지, URL이 올바른지 확인 필요
+    console.error('[STOMP] ========== WebSocket 연결 실패 ==========');
+    console.error('[STOMP] 연결 실패 가능 원인:');
+    console.error('[STOMP] 1. 백엔드 서버가 WebSocket 연결을 허용하지 않음');
+    console.error('[STOMP] 2. WebSocket URL이 잘못됨:', wsUrl);
+    console.error('[STOMP] 3. 백엔드가 SockJS를 사용 중일 수 있음');
+    console.error('[STOMP] 4. 방화벽 또는 프록시가 WebSocket 연결을 차단');
+    console.error('[STOMP] 5. SSL/TLS 인증서 문제');
+    console.error('[STOMP] 6. 백엔드 CORS 설정이 WebSocket을 허용하지 않음');
+    console.error('[STOMP] =========================================');
+    
+    // 사용자에게 알림 (브라우저 환경에서만)
+    if (typeof window !== 'undefined') {
+      // toast는 컴포넌트에서 처리하도록 함
+      console.warn('[STOMP] WebSocket 연결에 실패했습니다. 백엔드 서버 설정을 확인해주세요.');
+    }
   };
 
   stompClient.onDisconnect = () => {
