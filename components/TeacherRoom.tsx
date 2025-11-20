@@ -3,14 +3,23 @@
 import { Button } from "./ui/button";
 import { ArrowLeft, Radio, Mic, MicOff } from "lucide-react";
 import { useState, useEffect, useRef, useCallback } from "react";
-import { sendSttText, getAttendance } from "@/utils/api";
+import { getAttendance } from "@/utils/api";
 import { toast, Toaster } from "sonner";
+import {
+  initStompClient,
+  disconnectStompClient,
+  publishToChannel,
+  getStompClient,
+} from "@/utils/stomp";
 
 interface TeacherRoomProps {
   roomId: number;
   lectureName: string;
   professorCode: string;
   studentCode: string;
+  wsEndpoint: string;
+  subscribeUrl: string;
+  publishUrl: string;
   onExit: () => void;
 }
 
@@ -19,6 +28,9 @@ export function TeacherRoom({
   lectureName,
   professorCode,
   studentCode,
+  wsEndpoint,
+  subscribeUrl,
+  publishUrl,
   onExit,
 }: TeacherRoomProps) {
   const [isRecording, setIsRecording] = useState(false);
@@ -36,13 +48,25 @@ export function TeacherRoom({
   const fetchStudents = useCallback(async () => {
     setIsLoadingStudents(true);
     try {
+      console.log("[TeacherRoom] Fetching students for roomId:", roomId);
       const response = await getAttendance(roomId);
-      setStudents(
-        response.students.map((s) => ({
+      console.log("[TeacherRoom] Attendance response:", response);
+      console.log(
+        "[TeacherRoom] Students count:",
+        response.students?.length || 0
+      );
+
+      if (response.students && response.students.length > 0) {
+        const mappedStudents = response.students.map((s) => ({
           name: s.studentName,
           studentId: s.studentId,
-        }))
-      );
+        }));
+        console.log("[TeacherRoom] Mapped students:", mappedStudents);
+        setStudents(mappedStudents);
+      } else {
+        console.log("[TeacherRoom] No students found");
+        setStudents([]);
+      }
     } catch (error) {
       console.error("Failed to fetch students:", error);
       setStudents([]);
@@ -233,22 +257,45 @@ export function TeacherRoom({
     }
   }, [isRecording]);
 
-  // STT 텍스트를 백엔드로 전송
-  const sendSttToBackend = async (text: string) => {
+  // STT 텍스트를 백엔드로 전송 (STOMP WebSocket으로 발행)
+  const sendSttToBackend = (text: string) => {
     if (!text.trim()) return;
 
     try {
-      await sendSttText({
+      // STOMP publishUrl로 메시지 발행
+      publishToChannel(publishUrl, {
         studentCode: studentCode,
         text: text,
         language: "ko",
       });
-      console.log("STT text sent to backend:", text);
+      console.log("[TeacherRoom] STT text published:", text);
     } catch (error) {
-      console.error("Failed to send STT text:", error);
+      console.error("Failed to publish STT text:", error);
       toast.error("텍스트 전송에 실패했습니다.");
     }
   };
+
+  // STOMP WebSocket 연결 초기화
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    console.log("[TeacherRoom] Initializing STOMP client:", {
+      wsEndpoint,
+      publishUrl,
+    });
+
+    // STOMP 클라이언트 초기화
+    initStompClient({
+      wsEndpoint,
+      subscribeUrl,
+      publishUrl,
+    });
+
+    return () => {
+      // 컴포넌트 언마운트 시 연결 해제
+      disconnectStompClient();
+    };
+  }, [wsEndpoint, subscribeUrl, publishUrl]);
 
   const toggleRecording = () => {
     if (!isRecording) {
