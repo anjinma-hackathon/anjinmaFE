@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useRouter } from "next/navigation";
 import { toast, Toaster } from "sonner";
 import { TeacherRoom } from "@/components/TeacherRoom";
+import { createRoom, joinRoomByCode } from "@/utils/api";
 
 export default function ProfessorPage() {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
@@ -14,16 +15,14 @@ export default function ProfessorPage() {
   const [showLectureDialog, setShowLectureDialog] = useState(false);
   const [enteredCode, setEnteredCode] = useState("");
   const [showCodeInput, setShowCodeInput] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [currentRoom, setCurrentRoom] = useState<{
+    roomId: number;
     lectureName: string;
     professorCode: string;
     studentCode: string;
   } | null>(null);
   const router = useRouter();
-
-  const generateCode = () => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
-  };
 
   const handleStart = () => {
     if (selectedOption === "create") {
@@ -33,38 +32,66 @@ export default function ProfessorPage() {
     }
   };
 
-  const handleLectureSubmit = () => {
-    if (lectureName.trim()) {
-      const profCode = generateCode();
-      const studCode = generateCode();
+  const handleLectureSubmit = async () => {
+    if (!lectureName.trim()) return;
+
+    setIsLoading(true);
+    try {
+      // API: POST /rooms - 방 생성
+      const response = await createRoom({ roomName: lectureName.trim() });
       
-      // 바로 방 페이지로 이동
+      // 방 페이지로 이동
       setCurrentRoom({
-        lectureName: lectureName.trim(),
-        professorCode: profCode,
-        studentCode: studCode,
+        roomId: response.roomId,
+        lectureName: response.roomName,
+        professorCode: response.professorAuthCode,
+        studentCode: response.studentAuthCode,
       });
+      
       setShowLectureDialog(false);
       setLectureName("");
       setSelectedOption(null);
-      // TODO: 백엔드 API 호출하여 방 생성
+      toast.success('방이 생성되었습니다.');
+    } catch (error) {
+      console.error('Failed to create room:', error);
+      toast.error('방 생성에 실패했습니다.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleCodeSubmit = () => {
-    if (enteredCode.length === 6) {
-      // TODO: 백엔드 API 호출하여 teacherCode 검증 및 방 정보 가져오기
-      // 임시로 모의 데이터 사용
-      const mockRoom = {
-        lectureName: "기존 강의",
-        professorCode: enteredCode,
-        studentCode: generateCode(), // 실제로는 API에서 가져옴
-      };
+  const handleCodeSubmit = async () => {
+    if (enteredCode.length !== 6) return;
+
+    setIsLoading(true);
+    try {
+      // API: GET /rooms/join?code=xxx - 코드로 입장
+      const response = await joinRoomByCode(enteredCode);
       
-      setCurrentRoom(mockRoom);
+      // 교수 역할인지 확인
+      if (response.role !== 'PROFESSOR') {
+        toast.error('교수 코드가 아닙니다.');
+        setIsLoading(false);
+        return;
+      }
+      
+      // 방 페이지로 이동
+      setCurrentRoom({
+        roomId: response.roomId,
+        lectureName: response.roomName,
+        professorCode: response.professorAuthCode,
+        studentCode: response.studentAuthCode,
+      });
+      
       setShowCodeInput(false);
       setEnteredCode("");
       setSelectedOption(null);
+      toast.success('방에 입장했습니다.');
+    } catch (error) {
+      console.error('Failed to join room:', error);
+      toast.error('방 입장에 실패했습니다. 코드를 확인해주세요.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -72,6 +99,7 @@ export default function ProfessorPage() {
   if (currentRoom) {
     return (
       <TeacherRoom
+        roomId={currentRoom.roomId}
         lectureName={currentRoom.lectureName}
         professorCode={currentRoom.professorCode}
         studentCode={currentRoom.studentCode}
@@ -174,10 +202,10 @@ export default function ProfessorPage() {
             />
             <Button 
               className="w-full h-11 bg-gray-700 hover:bg-gray-800 text-white rounded-md font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-gray-700"
-              disabled={!lectureName.trim()}
+              disabled={!lectureName.trim() || isLoading}
               onClick={handleLectureSubmit}
             >
-              확인
+              {isLoading ? '생성 중...' : '확인'}
             </Button>
           </div>
         </DialogContent>
@@ -210,10 +238,10 @@ export default function ProfessorPage() {
             />
             <Button 
               className="w-full h-11 bg-gray-700 hover:bg-gray-800 text-white rounded-md font-medium text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-gray-700"
-              disabled={enteredCode.length !== 6}
+              disabled={enteredCode.length !== 6 || isLoading}
               onClick={handleCodeSubmit}
             >
-              확인
+              {isLoading ? '입장 중...' : '확인'}
             </Button>
           </div>
         </DialogContent>

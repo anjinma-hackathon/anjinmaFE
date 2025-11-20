@@ -15,6 +15,7 @@ import { CodeInput } from '@/components/molecules/CodeInput';
 
 interface ClassHistory {
   id: string;
+  roomId?: number;
   code: string;
   name: string;
   timestamp: Date;
@@ -31,13 +32,13 @@ export default function StudentPage() {
   const [history, setHistory] = useState<ClassHistory[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
-  const [currentClass, setCurrentClass] = useState<{ code: string; name: string; language: string; isLive: boolean } | null>(null);
+  const [currentClass, setCurrentClass] = useState<{ roomId: number; code: string; name: string; language: string; isLive: boolean } | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<Language>('ko');
   const [showStudentDialog, setShowStudentDialog] = useState(false);
   const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
   const [tempStudentName, setTempStudentName] = useState('');
   const [tempStudentId, setTempStudentId] = useState('');
-  const [pendingClass, setPendingClass] = useState<{ code: string; name: string; language: string; isLive: boolean } | null>(null);
+  const [pendingClass, setPendingClass] = useState<{ roomId: number; code: string; name: string; language: string; isLive: boolean } | null>(null);
   const [currentCode, setCurrentCode] = useState('');
 
   const t = translations[selectedLanguage];
@@ -86,55 +87,70 @@ export default function StudentPage() {
     );
   }
 
-  const handleCodeComplete = (fullCode: string) => {
-    // API 연결 전까지는 항상 라이브로 처리하고 디자인만 표시
-    const isLive = true;
-    
-    // 기존 히스토리에 이미 있는지 확인
-    const existingHistory = history.find(item => item.code === fullCode);
-    
-    if (!existingHistory) {
-      const newEntry: ClassHistory = {
-        id: Date.now().toString(),
-        code: fullCode,
-        name: `${t.enterClass} ${fullCode}`,
-        timestamp: new Date(),
-        isLive: isLive,
-        language: selectedLanguage
-      };
+  const handleCodeComplete = async (fullCode: string) => {
+    try {
+      // API: GET /rooms/join?code=xxx - 코드로 입장
+      const response = await joinRoomByCode(fullCode);
       
-      const updatedHistory = [newEntry, ...history];
-      setHistory(updatedHistory);
-      if (typeof window !== 'undefined') {
-        try {
-          localStorage.setItem('classHistory', JSON.stringify(updatedHistory));
-        } catch (error) {
-          console.error('Failed to save class history:', error);
+      // 학생 역할인지 확인
+      if (response.role !== 'STUDENT') {
+        toast.error('학생 코드가 아닙니다.');
+        return;
+      }
+      
+      const isLive = true; // TODO: 실제 라이브 상태 확인
+      
+      // 기존 히스토리에 이미 있는지 확인
+      const existingHistory = history.find(item => item.code === fullCode || item.roomId === response.roomId);
+      
+      if (!existingHistory) {
+        const newEntry: ClassHistory = {
+          id: Date.now().toString(),
+          roomId: response.roomId,
+          code: response.studentAuthCode,
+          name: response.roomName,
+          timestamp: new Date(),
+          isLive: isLive,
+          language: selectedLanguage
+        };
+        
+        const updatedHistory = [newEntry, ...history];
+        setHistory(updatedHistory);
+        if (typeof window !== 'undefined') {
+          try {
+            localStorage.setItem('classHistory', JSON.stringify(updatedHistory));
+          } catch (error) {
+            console.error('Failed to save class history:', error);
+          }
         }
       }
+      
+      // 입장하려는 수업 정보를 먼저 설정
+      const classToEnter = { 
+        roomId: response.roomId,
+        code: response.studentAuthCode, 
+        name: response.roomName, 
+        language: selectedLanguage, 
+        isLive: isLive 
+      };
+      setPendingClass(classToEnter);
+      
+      // 기존에 입력한 학생 정보가 있으면 기본값으로 설정
+      if (studentInfo?.name && studentInfo?.studentId) {
+        setTempStudentName(studentInfo.name);
+        setTempStudentId(studentInfo.studentId);
+      } else {
+        // 없으면 빈 값으로
+        setTempStudentName('');
+        setTempStudentId('');
+      }
+      
+      // 항상 학생 정보 입력 다이얼로그 표시
+      setShowStudentDialog(true);
+    } catch (error) {
+      console.error('Failed to join room:', error);
+      toast.error('방 입장에 실패했습니다. 코드를 확인해주세요.');
     }
-    
-    // 입장하려는 수업 정보를 먼저 설정
-    const classToEnter = { 
-      code: fullCode, 
-      name: existingHistory?.name || `${t.enterClass} ${fullCode}`, 
-      language: selectedLanguage, 
-      isLive: isLive 
-    };
-    setPendingClass(classToEnter);
-    
-    // 기존에 입력한 학생 정보가 있으면 기본값으로 설정
-    if (studentInfo?.name && studentInfo?.studentId) {
-      setTempStudentName(studentInfo.name);
-      setTempStudentId(studentInfo.studentId);
-    } else {
-      // 없으면 빈 값으로
-      setTempStudentName('');
-      setTempStudentId('');
-    }
-    
-    // 항상 학생 정보 입력 다이얼로그 표시
-    setShowStudentDialog(true);
   };
 
   const handleCodeChange = (fullCode: string) => {
@@ -179,36 +195,70 @@ export default function StudentPage() {
     setEditingName('');
   };
 
-  const handleDoubleClick = (item: ClassHistory) => {
+  const handleDoubleClick = async (item: ClassHistory) => {
     if (!item.isLive) {
       toast.error(t.cannotEnter);
       return;
     }
     
-    const classToEnter = { code: item.code, name: item.name, language: item.language, isLive: item.isLive };
-    setPendingClass(classToEnter);
-    
-    // 기존에 입력한 학생 정보가 있으면 기본값으로 설정
-    if (studentInfo?.name && studentInfo?.studentId) {
-      setTempStudentName(studentInfo.name);
-      setTempStudentId(studentInfo.studentId);
-    } else {
-      // 없으면 빈 값으로
-      setTempStudentName('');
-      setTempStudentId('');
+    try {
+      // roomId가 있으면 방 정보 조회, 없으면 코드로 입장
+      let roomInfo;
+      if (item.roomId) {
+        // API: GET /rooms/{roomId} - 방 정보 조회
+        roomInfo = await getRoomInfo(item.roomId);
+      } else {
+        // API: GET /rooms/join?code=xxx - 코드로 입장
+        const joinResponse = await joinRoomByCode(item.code);
+        roomInfo = {
+          roomId: joinResponse.roomId,
+          roomName: joinResponse.roomName,
+          studentAuthCode: joinResponse.studentAuthCode,
+        };
+      }
+      
+      const classToEnter = { 
+        roomId: roomInfo.roomId,
+        code: roomInfo.studentAuthCode, 
+        name: roomInfo.roomName, 
+        language: item.language, 
+        isLive: item.isLive 
+      };
+      setPendingClass(classToEnter);
+      
+      // 기존에 입력한 학생 정보가 있으면 기본값으로 설정
+      if (studentInfo?.name && studentInfo?.studentId) {
+        setTempStudentName(studentInfo.name);
+        setTempStudentId(studentInfo.studentId);
+      } else {
+        // 없으면 빈 값으로
+        setTempStudentName('');
+        setTempStudentId('');
+      }
+      
+      // 항상 학생 정보 입력 다이얼로그 표시
+      setShowStudentDialog(true);
+    } catch (error) {
+      console.error('Failed to load room info:', error);
+      toast.error('방 정보를 불러오는데 실패했습니다.');
     }
-    
-    // 항상 학생 정보 입력 다이얼로그 표시
-    setShowStudentDialog(true);
   };
 
-  const handleStudentSubmit = (e: React.FormEvent) => {
+  const handleStudentSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!tempStudentName.trim() || !tempStudentId.trim()) {
       toast.error('이름과 학번을 모두 입력해주세요.');
       return;
     }
+    
+    if (!pendingClass) {
+      toast.error('수업 정보를 찾을 수 없습니다.');
+      return;
+    }
+    
+    // TODO: 학생 정보를 백엔드에 등록하는 API 호출 필요
+    // await registerStudent(pendingClass.roomId, { name: tempStudentName.trim(), studentId: tempStudentId.trim() });
     
     const newStudentInfo: StudentInfo = {
       name: tempStudentName.trim(),
@@ -233,11 +283,7 @@ export default function StudentPage() {
     setShowStudentDialog(false);
     
     // 수업 페이지로 이동
-    if (pendingClass) {
-      setCurrentClass(pendingClass);
-    } else {
-      toast.error('수업 정보를 찾을 수 없습니다.');
-    }
+    setCurrentClass(pendingClass);
   };
 
   return (

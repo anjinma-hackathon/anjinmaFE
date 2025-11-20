@@ -2,11 +2,12 @@
 
 import { Button } from "./ui/button";
 import { ArrowLeft, Radio, Mic, MicOff } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
-import { sendSttText } from "@/utils/api";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { sendSttText, getAttendance } from "@/utils/api";
 import { toast, Toaster } from "sonner";
 
 interface TeacherRoomProps {
+  roomId: number;
   lectureName: string;
   professorCode: string;
   studentCode: string;
@@ -14,6 +15,7 @@ interface TeacherRoomProps {
 }
 
 export function TeacherRoom({
+  roomId,
   lectureName,
   professorCode,
   studentCode,
@@ -24,15 +26,40 @@ export function TeacherRoom({
   const [displayText, setDisplayText] = useState("");
   const [students, setStudents] = useState<
     Array<{ name: string; studentId: string }>
-  >([
-    { name: "김민수", studentId: "2021001" },
-    { name: "이지은", studentId: "2021002" },
-    { name: "박준형", studentId: "2021003" },
-    { name: "최서연", studentId: "2021004" },
-  ]);
+  >([]);
+  const [isLoadingStudents, setIsLoadingStudents] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const finalTranscriptRef = useRef<string>("");
+
+  // 학생 목록 조회 (1번 API)
+  const fetchStudents = useCallback(async () => {
+    setIsLoadingStudents(true);
+    try {
+      const response = await getAttendance(roomId);
+      setStudents(
+        response.students.map((s) => ({
+          name: s.studentName,
+          studentId: s.studentId,
+        }))
+      );
+    } catch (error) {
+      console.error("Failed to fetch students:", error);
+      setStudents([]);
+    } finally {
+      setIsLoadingStudents(false);
+    }
+  }, [roomId]);
+
+  // 주기적으로 학생 목록 조회 (5초마다)
+  useEffect(() => {
+    fetchStudents();
+    const interval = setInterval(() => {
+      fetchStudents();
+    }, 5000); // 5초마다 갱신
+
+    return () => clearInterval(interval);
+  }, [fetchStudents]);
 
   // 텍스트를 실시간으로 문단 단위로 포맷팅하는 함수 (cuckooso 스타일)
   const formatTextWithParagraphs = (
@@ -372,19 +399,29 @@ export function TeacherRoom({
             </div>
 
             <div className="flex-1 overflow-y-auto p-4">
-              <div className="space-y-3">
-                {students.map((student, index) => (
-                  <div
-                    key={index}
-                    className="bg-slate-50 rounded-xl p-4 hover:bg-slate-100 transition-colors"
-                  >
-                    <p className="text-slate-800">{student.name}</p>
-                    <p className="text-sm text-slate-500">
-                      {student.studentId}
-                    </p>
-                  </div>
-                ))}
-              </div>
+              {isLoadingStudents ? (
+                <div className="flex items-center justify-center h-full">
+                  <p className="text-sm text-slate-400">불러오는 중...</p>
+                </div>
+              ) : students.length === 0 ? (
+                <div className="flex items-center justify-center h-full">
+                  <p className="text-sm text-slate-400">참가자가 없습니다</p>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {students.map((student, index) => (
+                    <div
+                      key={index}
+                      className="bg-slate-50 rounded-xl p-4 hover:bg-slate-100 transition-colors"
+                    >
+                      <p className="text-slate-800">{student.name}</p>
+                      <p className="text-sm text-slate-500">
+                        {student.studentId}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
