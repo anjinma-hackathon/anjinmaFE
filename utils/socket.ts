@@ -49,7 +49,7 @@ export function initSocket(studentCode?: string): Socket {
     console.log('Socket connected:', socket?.id);
     
     // 학생코드로 방에 입장
-    if (studentCode) {
+    if (studentCode && socket) {
       socket.emit('room:join', { studentCode });
     }
   });
