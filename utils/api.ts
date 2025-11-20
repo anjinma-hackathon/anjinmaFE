@@ -297,7 +297,9 @@ export async function translatePdf(data: TranslatePdfRequest): Promise<Blob> {
       formData.append('mode', data.mode);
     }
     if (data.filename) {
-      formData.append('filename', data.filename);
+      // 확장자 제외 (백엔드 요구사항)
+      const filenameWithoutExt = data.filename.replace(/\.[^/.]+$/, "");
+      formData.append('filename', filenameWithoutExt);
     }
     if (data.progressToken) {
       formData.append('progressToken', data.progressToken);

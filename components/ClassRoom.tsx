@@ -70,6 +70,7 @@ export function ClassRoom({
   const [translationProgress, setTranslationProgress] = useState<number | null>(null);
   const [progressToken, setProgressToken] = useState<string | null>(null);
   const [progressUnsubscribe, setProgressUnsubscribe] = useState<(() => void) | null>(null);
+  const [isTranslated, setIsTranslated] = useState(false); // 번역 완료 여부
 
   const t = translations[language];
 
@@ -140,28 +141,11 @@ export function ClassRoom({
             const data = JSON.parse(message.body);
             console.log("[ClassRoom] Received message:", data);
 
-            // PDF 번역 진행 상황 메시지 처리
-            if (data.type === "progress" && data.progress !== undefined) {
-              console.log("[ClassRoom] PDF translation progress:", data.progress);
-              setTranslationProgress(data.progress);
-              if (data.progress === 100) {
-                toast.success("PDF 번역이 완료되었습니다.");
-                setTranslationProgress(null);
-              }
-              return;
-            }
-
-            // PDF 번역 완료 메시지 처리 (Blob URL 포함)
-            if (data.type === "pdf_complete" && data.pdfUrl) {
-              console.log("[ClassRoom] PDF translation completed, URL:", data.pdfUrl);
-              // 기존 PDF URL이 있으면 해제
-              if (pdfUrl) {
-                URL.revokeObjectURL(pdfUrl);
-              }
-              setPdfUrl(data.pdfUrl);
-              setIsTranslating(false);
-              setTranslationProgress(null);
-              toast.success(`${languageLabels[language]}로 번역이 완료되었습니다.`);
+            // PDF 번역 진행 상황 메시지 처리 (자막 채널에서도 수신 가능한 경우 대비)
+            // 주의: 실제로는 /sub/translate/{progressToken}에서만 수신됨
+            if (data.type && ['started', 'ocr_started', 'ocr_page', 'translate_started', 'translate_page', 'overlay', 'completed', 'error'].includes(data.type)) {
+              console.log("[ClassRoom] PDF progress event received in subtitle channel (unexpected):", data);
+              // 이 채널에서는 처리하지 않음 (별도 구독에서 처리)
               return;
             }
 
@@ -277,6 +261,7 @@ export function ClassRoom({
       const url = URL.createObjectURL(file);
       setPdfUrl(url);
       setTranslatedContent("");
+      setIsTranslated(false); // 새 파일 업로드 시 번역 상태 초기화
     }
   };
 
@@ -286,7 +271,7 @@ export function ClassRoom({
       return;
     }
 
-    if (!wsEndpoint || !subscribeUrl) {
+    if (!wsEndpoint) {
       toast.error('WebSocket 연결이 필요합니다.');
       return;
     }
@@ -294,90 +279,125 @@ export function ClassRoom({
     setIsTranslating(true);
     setTranslationProgress(0);
 
+    // progressToken 생성 (UUID 형식)
+    const progressToken = crypto.randomUUID();
+    setProgressToken(progressToken);
+
+    let progressUnsubscribeFn: (() => void) | null = null;
+
     try {
       // WebSocket 연결 확인
       await waitForConnection(5000);
 
-      // roomId 사용 (prop에서 받음)
-
-      // PDF 번역 진행 상황 구독: /sub/rooms/{roomId}/translate/progress
-      const progressSubscribeUrl = `/sub/rooms/${roomId}/translate/progress`;
-      const unsubscribeProgress = await subscribeToChannel(progressSubscribeUrl, (message) => {
+      // PDF 번역 진행 상황 구독: /sub/translate/{progressToken}
+      const progressSubscribeUrl = `/sub/translate/${progressToken}`;
+      console.log("[ClassRoom] Subscribing to PDF progress:", progressSubscribeUrl);
+      
+      progressUnsubscribeFn = await subscribeToChannel(progressSubscribeUrl, (message) => {
         try {
-          const data = JSON.parse(message.body);
-          console.log("[ClassRoom] PDF translation progress:", data);
-          
-          if (data.progress !== undefined) {
-            setTranslationProgress(data.progress);
-            if (data.progress === 100) {
-              toast.success("PDF 번역이 완료되었습니다.");
-              setTranslationProgress(null);
-              if (unsubscribeProgress) {
-                unsubscribeProgress();
+          const evt = JSON.parse(message.body);
+          console.log("[ClassRoom] PDF translation progress event:", evt);
+
+          // 이벤트 타입에 따라 처리
+          switch (evt.type) {
+            case 'started':
+              console.log("[ClassRoom] PDF translation started");
+              setTranslationProgress(0);
+              toast.info('PDF 번역이 시작되었습니다.');
+              break;
+
+            case 'ocr_started':
+              console.log("[ClassRoom] OCR started");
+              toast.info('OCR 처리 중...');
+              break;
+
+            case 'ocr_page':
+              if (evt.current && evt.total) {
+                const progress = Math.round((evt.current / evt.total) * 30); // OCR은 30%까지
+                setTranslationProgress(progress);
+                console.log(`[ClassRoom] OCR page ${evt.current}/${evt.total}`);
               }
-            }
-          }
-          
-          // PDF 완료 메시지 처리
-          if (data.type === "pdf_complete" && data.pdfUrl) {
-            if (pdfUrl) {
-              URL.revokeObjectURL(pdfUrl);
-            }
-            setPdfUrl(data.pdfUrl);
-            setIsTranslating(false);
-            setTranslationProgress(null);
-            if (unsubscribeProgress) {
-              unsubscribeProgress();
-            }
+              break;
+
+            case 'translate_started':
+              console.log("[ClassRoom] Translation started");
+              setTranslationProgress(30);
+              toast.info('번역 중...');
+              break;
+
+            case 'translate_page':
+              if (evt.current && evt.total) {
+                // OCR 30% + 번역 60% = 90%까지
+                const progress = 30 + Math.round((evt.current / evt.total) * 60);
+                setTranslationProgress(progress);
+                console.log(`[ClassRoom] Translate page ${evt.current}/${evt.total}`);
+              }
+              break;
+
+            case 'overlay':
+              console.log("[ClassRoom] PDF overlay (synthesizing)");
+              setTranslationProgress(90);
+              toast.info('PDF 합성 중...');
+              break;
+
+            case 'completed':
+              console.log("[ClassRoom] PDF translation completed");
+              setTranslationProgress(100);
+              toast.success('PDF 번역이 완료되었습니다.');
+              // 구독 해제
+              if (progressUnsubscribeFn) {
+                progressUnsubscribeFn();
+                progressUnsubscribeFn = null;
+              }
+              break;
+
+            case 'error':
+              console.error("[ClassRoom] PDF translation error:", evt.message);
+              toast.error(evt.message || 'PDF 번역 중 오류가 발생했습니다.');
+              setTranslationProgress(null);
+              setIsTranslating(false);
+              // 구독 해제
+              if (progressUnsubscribeFn) {
+                progressUnsubscribeFn();
+                progressUnsubscribeFn = null;
+              }
+              return; // 에러 시 함수 종료
+
+            default:
+              console.log("[ClassRoom] Unknown progress event type:", evt.type);
           }
         } catch (error) {
-          console.error("[ClassRoom] Failed to parse progress message:", error);
+          console.error("[ClassRoom] Failed to parse progress event:", error);
         }
       });
-      setProgressUnsubscribe(() => unsubscribeProgress);
 
-      // PDF 번역 요청 발행: /pub/translate/pdf/{roomId}
-      const translatePublishUrl = `/pub/translate/pdf/${roomId}`;
-      const progressToken = `pdf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      setProgressToken(progressToken);
-
-      publishToChannel(translatePublishUrl, {
-        filename: pdfFile.name,
-        language: language,
-        mode: 'chat',
-        progressToken: progressToken,
-      });
-      console.log("[ClassRoom] PDF translation request published:", translatePublishUrl);
-
-      // PDF 파일을 FormData로 전송
-      const formData = new FormData();
-      formData.append('file', pdfFile);
-      formData.append('language', language);
-      formData.append('mode', 'chat');
-      formData.append('filename', pdfFile.name);
-      formData.append('progressToken', progressToken);
-
-      // PDF 번역 API 호출 (백엔드가 WebSocket으로 진행 상황을 보내고, 완료 시 PDF를 반환)
+      // PDF 번역 API 호출 (progressToken 포함)
       const translatedPdfBlob = await translatePdf({
         file: pdfFile,
         language: language,
         mode: 'chat',
-        filename: pdfFile.name,
+        filename: pdfFile.name.replace(/\.[^/.]+$/, ""), // 확장자 제외
         progressToken: progressToken,
       });
 
-      // WebSocket으로 진행 상황을 받지 못한 경우 폴백: 직접 Blob 처리
+      // 번역된 PDF를 Blob URL로 생성하여 표시
       if (translatedPdfBlob && translatedPdfBlob.size > 0) {
         const translatedPdfUrl = URL.createObjectURL(translatedPdfBlob);
         
+        // 기존 PDF URL이 있으면 해제
         if (pdfUrl) {
           URL.revokeObjectURL(pdfUrl);
         }
         
+        // 번역된 PDF로 교체
         setPdfUrl(translatedPdfUrl);
         setPdfFile(new File([translatedPdfBlob], `translated_${pdfFile.name}`, { type: 'application/pdf' }));
+        setIsTranslated(true); // 번역 완료 표시
+        
         setTranslationProgress(null);
-        toast.success(`${languageLabels[language]}로 번역이 완료되었습니다.`);
+        // completed 이벤트에서 이미 토스트 표시됨
+      } else {
+        throw new Error('번역된 PDF 파일을 받지 못했습니다.');
       }
     } catch (error) {
       console.error('PDF 번역 실패:', error);
@@ -385,6 +405,10 @@ export function ClassRoom({
       setTranslationProgress(null);
     } finally {
       setIsTranslating(false);
+      // 구독 해제
+      if (progressUnsubscribeFn) {
+        progressUnsubscribeFn();
+      }
       if (progressUnsubscribe) {
         progressUnsubscribe();
         setProgressUnsubscribe(null);
@@ -480,6 +504,7 @@ export function ClassRoom({
                       setPdfFile(null);
                       setPdfUrl(null);
                       setTranslatedContent("");
+                      setIsTranslated(false);
                     }}
                     className="hover:bg-red-50 hover:text-red-600"
                   >
@@ -521,26 +546,16 @@ export function ClassRoom({
                 )}
 
                 <div className="space-y-2">
-                  <Button
-                    onClick={handleTranslate}
-                    disabled={isTranslating}
-                    className="w-full bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white"
-                  >
-                    {isTranslating ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2" />
-                        {t.translating}
-                      </>
-                    ) : (
-                      <>
-                        <Languages className="w-4 h-4 mr-2" />
-                        {t.translateTo}
-                        {languageLabels[language]}
-                      </>
-                    )}
-                  </Button>
-                  
-                  {pdfUrl && (
+                  {isTranslating ? (
+                    <Button
+                      disabled
+                      className="w-full bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white"
+                    >
+                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2" />
+                      {t.translating}
+                    </Button>
+                  ) : isTranslated && pdfUrl ? (
+                    // 번역 완료 시 다운로드 버튼
                     <Button
                       onClick={() => {
                         if (pdfUrl && pdfFile) {
@@ -552,11 +567,20 @@ export function ClassRoom({
                           document.body.removeChild(link);
                         }
                       }}
-                      variant="outline"
-                      className="w-full border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                      className="w-full bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white"
                     >
                       <Download className="w-4 h-4 mr-2" />
                       PDF 다운로드
+                    </Button>
+                  ) : (
+                    // 번역 전 번역하기 버튼
+                    <Button
+                      onClick={handleTranslate}
+                      className="w-full bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white"
+                    >
+                      <Languages className="w-4 h-4 mr-2" />
+                      {t.translateTo}
+                      {languageLabels[language]}
                     </Button>
                   )}
                 </div>
