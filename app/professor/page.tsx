@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useRouter } from "next/navigation";
 import { toast, Toaster } from "sonner";
 import { TeacherRoom } from "@/components/TeacherRoom";
-import { createRoom, joinRoomByCode } from "@/utils/api";
+import { createRoom, joinRoomByCode, getRoomInfo } from "@/utils/api";
 
 export default function ProfessorPage() {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
@@ -21,6 +21,9 @@ export default function ProfessorPage() {
     lectureName: string;
     professorCode: string;
     studentCode: string;
+    wsEndpoint: string;
+    subscribeUrl: string;
+    publishUrl: string;
   } | null>(null);
   const router = useRouter();
 
@@ -46,6 +49,9 @@ export default function ProfessorPage() {
         lectureName: response.roomName,
         professorCode: response.professorAuthCode,
         studentCode: response.studentAuthCode,
+        wsEndpoint: response.wsEndpoint,
+        subscribeUrl: response.subscribeUrl,
+        publishUrl: response.publishUrl,
       });
       
       setShowLectureDialog(false);
@@ -75,12 +81,18 @@ export default function ProfessorPage() {
         return;
       }
       
+      // 방 정보 조회 (WebSocket 정보 포함)
+      const roomInfo = await getRoomInfo(response.roomId);
+      
       // 방 페이지로 이동
       setCurrentRoom({
-        roomId: response.roomId,
-        lectureName: response.roomName,
-        professorCode: response.professorAuthCode,
-        studentCode: response.studentAuthCode,
+        roomId: roomInfo.roomId,
+        lectureName: roomInfo.roomName,
+        professorCode: roomInfo.professorAuthCode,
+        studentCode: roomInfo.studentAuthCode,
+        wsEndpoint: roomInfo.wsEndpoint,
+        subscribeUrl: roomInfo.subscribeUrl,
+        publishUrl: roomInfo.publishUrl,
       });
       
       setShowCodeInput(false);
@@ -103,6 +115,9 @@ export default function ProfessorPage() {
         lectureName={currentRoom.lectureName}
         professorCode={currentRoom.professorCode}
         studentCode={currentRoom.studentCode}
+        wsEndpoint={currentRoom.wsEndpoint}
+        subscribeUrl={currentRoom.subscribeUrl}
+        publishUrl={currentRoom.publishUrl}
         onExit={() => setCurrentRoom(null)}
       />
     );

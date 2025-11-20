@@ -12,6 +12,7 @@ import { translations, Language } from '@/utils/translations';
 import { toast, Toaster } from 'sonner';
 import { ClassRoom } from '@/components/ClassRoom';
 import { CodeInput } from '@/components/molecules/CodeInput';
+import { joinRoomByCode, getRoomInfo } from '@/utils/api';
 
 interface ClassHistory {
   id: string;
@@ -32,13 +33,13 @@ export default function StudentPage() {
   const [history, setHistory] = useState<ClassHistory[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
-  const [currentClass, setCurrentClass] = useState<{ roomId: number; code: string; name: string; language: string; isLive: boolean } | null>(null);
+  const [currentClass, setCurrentClass] = useState<{ roomId: number; code: string; name: string; language: string; isLive: boolean; wsEndpoint?: string; subscribeUrl?: string; publishUrl?: string } | null>(null);
   const [selectedLanguage, setSelectedLanguage] = useState<Language>('ko');
   const [showStudentDialog, setShowStudentDialog] = useState(false);
   const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
   const [tempStudentName, setTempStudentName] = useState('');
   const [tempStudentId, setTempStudentId] = useState('');
-  const [pendingClass, setPendingClass] = useState<{ roomId: number; code: string; name: string; language: string; isLive: boolean } | null>(null);
+  const [pendingClass, setPendingClass] = useState<{ roomId: number; code: string; name: string; language: string; isLive: boolean; wsEndpoint?: string; subscribeUrl?: string; publishUrl?: string } | null>(null);
   const [currentCode, setCurrentCode] = useState('');
 
   const t = translations[selectedLanguage];
@@ -82,6 +83,9 @@ export default function StudentPage() {
         isLive={currentClass.isLive}
         studentInfo={studentInfo}
         selectedLanguage={selectedLanguage}
+        wsEndpoint={currentClass.wsEndpoint}
+        subscribeUrl={currentClass.subscribeUrl}
+        publishUrl={currentClass.publishUrl}
         onExit={() => setCurrentClass(null)}
       />
     );
@@ -125,13 +129,19 @@ export default function StudentPage() {
         }
       }
       
+      // 방 정보 조회 (WebSocket 정보 포함)
+      const roomInfo = await getRoomInfo(response.roomId);
+      
       // 입장하려는 수업 정보를 먼저 설정
       const classToEnter = { 
-        roomId: response.roomId,
-        code: response.studentAuthCode, 
-        name: response.roomName, 
+        roomId: roomInfo.roomId,
+        code: roomInfo.studentAuthCode, 
+        name: roomInfo.roomName, 
         language: selectedLanguage, 
-        isLive: isLive 
+        isLive: isLive,
+        wsEndpoint: roomInfo.wsEndpoint,
+        subscribeUrl: roomInfo.subscribeUrl,
+        publishUrl: roomInfo.publishUrl,
       };
       setPendingClass(classToEnter);
       
@@ -222,7 +232,10 @@ export default function StudentPage() {
         code: roomInfo.studentAuthCode, 
         name: roomInfo.roomName, 
         language: item.language, 
-        isLive: item.isLive 
+        isLive: item.isLive,
+        wsEndpoint: roomInfo.wsEndpoint,
+        subscribeUrl: roomInfo.subscribeUrl,
+        publishUrl: roomInfo.publishUrl,
       };
       setPendingClass(classToEnter);
       

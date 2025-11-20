@@ -1,53 +1,61 @@
-# 교육약자를 위한 실시간 번역 서비스
+# TransClass - 실시간 자막 서비스
 
-경청이 어려운 학생들을 위해 강의 음성을 자막·번역으로 실시간 제공하는 서비스입니다.
+교육 소외 계층을 위한 실시간 번역 자막 서비스입니다.
 
-## 기술 스택
+## 환경 변수 설정
 
-- **프론트엔드**: Next.js 14, TypeScript, Tailwind CSS
-- **디자인**: Atomic Design Pattern
+프로젝트 루트에 `.env.local` 파일을 생성하고 다음 환경 변수를 설정하세요:
 
-## 프로젝트 구조
+### 옵션 1: 프록시 사용 (SSL 인증서 오류 발생 시)
 
-```
-├── app/                  # Next.js App Router
-│   ├── student/         # 학생 페이지
-│   ├── teacher/         # 교수 페이지
-│   └── page.tsx         # 메인 페이지
-├── components/          # Atomic Design 컴포넌트
-│   ├── atoms/          # 가장 작은 단위 컴포넌트
-│   ├── molecules/      # atoms 조합
-│   └── organisms/      # molecules 조합
-└── utils/              # 유틸리티 함수
+```env
+NEXT_PUBLIC_API_URL=https://anjinma-bak.bluerack.org
+API_URL=https://anjinma-bak.bluerack.org
+NEXT_PUBLIC_SOCKET_URL=https://anjinma-bak.bluerack.org
+NEXT_PUBLIC_USE_PROXY=true
+NODE_TLS_REJECT_UNAUTHORIZED=0
 ```
 
-## 시작하기
+**중요**: 
+- 프록시를 사용하는 경우 서버 측에서 `API_URL` 환경 변수도 설정해야 합니다 (클라이언트 측 `NEXT_PUBLIC_API_URL`과 동일한 값).
+- `NODE_TLS_REJECT_UNAUTHORIZED=0`은 개발 환경에서만 사용하세요. 프로덕션에서는 백엔드 서버의 SSL 인증서를 올바르게 설정하는 것이 권장됩니다.
+- 503 에러가 발생하는 경우 백엔드 서버가 실행 중인지 확인하세요.
 
-### 설치
+### 옵션 2: 직접 호출 (정상적인 SSL 인증서가 있는 경우)
+
+```env
+NEXT_PUBLIC_API_URL=https://anjinma-bak.bluerack.org
+NEXT_PUBLIC_SOCKET_URL=https://anjinma-bak.bluerack.org
+NEXT_PUBLIC_USE_PROXY=false
+```
+
+### 필수 환경 변수
+
+- `NEXT_PUBLIC_API_URL`: 백엔드 API 서버 URL
+- `NEXT_PUBLIC_SOCKET_URL`: Socket.io 서버 URL
+- `NEXT_PUBLIC_USE_PROXY`: 프록시 사용 여부 (`true` 또는 `false`, 기본값: `false`)
+
+**중요**: 
+- 환경 변수가 설정되지 않으면 애플리케이션이 실행되지 않습니다.
+- SSL 인증서 오류(`ERR_CERT_AUTHORITY_INVALID`)가 발생하는 경우 `NEXT_PUBLIC_USE_PROXY=true`로 설정하세요.
+- 프록시는 개발 환경에서 SSL 인증서 문제를 우회하기 위한 것입니다. 프로덕션에서는 백엔드 서버의 SSL 인증서를 수정하는 것이 권장됩니다.
+
+## 설치 및 실행
 
 ```bash
+# 의존성 설치
 npm install
-```
 
-### 개발 서버 실행
-
-```bash
+# 개발 서버 실행
 npm run dev
+
+# 프로덕션 빌드
+npm run build
+
+# 프로덕션 서버 실행
+npm start
 ```
 
-브라우저에서 [http://localhost:3000](http://localhost:3000)를 열어 확인하세요.
+## 배포
 
-## 주요 기능
-
-### 학생 페이지
-- 기존 방 목록 (LocalStorage 저장)
-- 학생코드로 새로운 방 입장
-
-### 교수 페이지
-- 방 만들기 (교수 이름, 과목명 입력)
-- 교수코드로 기존 방 입장
-
-## 개발 참고
-
-- PRD 문서: `PROJECTPRD.md` 참고
-- Figma 디자인을 참고하여 UI 구현
+배포 방법은 `DEPLOY.md` 파일을 참고하세요.

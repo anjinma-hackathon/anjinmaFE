@@ -14,11 +14,11 @@ import { useState, useEffect } from "react";
 import { Card } from "./ui/card";
 import { translations, Language } from "@/utils/translations";
 import {
-  initSocket,
-  disconnectSocket,
-  onSocketEvent,
-  offSocketEvent,
-} from "@/utils/socket";
+  initStompClient,
+  disconnectStompClient,
+  subscribeToChannel,
+  getStompClient,
+} from "@/utils/stomp";
 import { toast, Toaster } from "sonner";
 
 interface ClassRoomProps {
@@ -31,6 +31,9 @@ interface ClassRoomProps {
     studentId: string;
   };
   selectedLanguage: Language;
+  wsEndpoint?: string;
+  subscribeUrl?: string;
+  publishUrl?: string;
   onExit: () => void;
 }
 
@@ -48,6 +51,9 @@ export function ClassRoom({
   isLive,
   studentInfo,
   selectedLanguage: initialSelectedLanguage,
+  wsEndpoint,
+  subscribeUrl,
+  publishUrl,
   onExit,
 }: ClassRoomProps) {
   const [language, setLanguage] = useState<Language>(initialSelectedLanguage);
@@ -59,68 +65,112 @@ export function ClassRoom({
 
   const t = translations[language];
 
-  // Socket.io 연결 및 실시간 번역 텍스트 수신
+  // STOMP WebSocket 연결 및 실시간 번역 텍스트 수신
   useEffect(() => {
-    if (!isLive || !classCode) return;
+    if (typeof window === "undefined") return;
+    if (!isLive || !classCode || !wsEndpoint || !subscribeUrl) {
+      console.log("[ClassRoom] Missing WebSocket config:", {
+        isLive,
+        classCode,
+        wsEndpoint,
+        subscribeUrl,
+      });
+      return;
+    }
 
-    // Socket.io 연결
-    const socket = initSocket(classCode);
+    console.log("[ClassRoom] Initializing STOMP client:", {
+      wsEndpoint,
+      subscribeUrl,
+    });
 
-    // 번역된 텍스트 수신 이벤트
-    const handleTranslationUpdate = (data: {
-      studentCode: string;
-      translatedText: string;
-      targetLanguage: string;
-    }) => {
-      // 현재 선택한 언어와 일치하는 번역만 표시
-      if (data.studentCode === classCode && data.targetLanguage === language) {
-        setTranslatedContent((prev) => {
-          // 이전 내용에 새로운 내용 추가 (줄바꿈 처리)
-          const newContent = prev
-            ? prev + "\n" + data.translatedText
-            : data.translatedText;
-          return newContent;
+    let unsubscribe: (() => void) | null = null;
+
+    // STOMP 클라이언트 초기화
+    initStompClient({
+      wsEndpoint,
+      subscribeUrl,
+      publishUrl: publishUrl || "",
+    });
+
+    // STOMP 클라이언트 초기화 및 구독
+    const setupSubscription = async () => {
+      try {
+        // subscribeUrl로 구독 (연결 완료까지 자동 대기)
+        unsubscribe = await subscribeToChannel(subscribeUrl, (message) => {
+          try {
+            const data = JSON.parse(message.body);
+            console.log("[ClassRoom] Received message:", data);
+
+            // 번역된 텍스트 수신
+            // 백엔드에서 번역된 텍스트를 보내줌
+            // data 형식: { translatedText: "...", targetLanguage: "en" } 또는 { text: "...", translatedText: "...", targetLanguage: "en" }
+            if (data.translatedText) {
+              // targetLanguage와 현재 선택한 언어가 일치하는 번역만 표시
+              const targetLang =
+                data.targetLanguage || data.language || language;
+
+              // 언어 코드 정규화 (ko, en, zh, ja 등)
+              const normalizedTargetLang = targetLang
+                .toLowerCase()
+                .split("-")[0];
+              const normalizedCurrentLang = language
+                .toLowerCase()
+                .split("-")[0];
+
+              console.log("[ClassRoom] Received translation:", {
+                targetLanguage: normalizedTargetLang,
+                currentLanguage: normalizedCurrentLang,
+                translatedText: data.translatedText.substring(0, 50) + "...",
+              });
+
+              if (
+                normalizedTargetLang === normalizedCurrentLang ||
+                normalizedTargetLang === language
+              ) {
+                setTranslatedContent((prev) => {
+                  // 이전 내용에 새로운 내용 추가 (줄바꿈 처리)
+                  const newContent = prev
+                    ? prev + "\n\n" + data.translatedText
+                    : data.translatedText;
+                  return newContent;
+                });
+              } else {
+                console.log("[ClassRoom] Language mismatch, ignoring:", {
+                  target: normalizedTargetLang,
+                  current: normalizedCurrentLang,
+                });
+              }
+            } else if (data.text) {
+              // 원본 텍스트만 있는 경우 (학생 화면에서는 무시, 백엔드에서 번역 처리 예정)
+              console.log(
+                "[ClassRoom] Received original text without translation (waiting for backend to translate):",
+                data.text.substring(0, 50)
+              );
+            }
+          } catch (error) {
+            console.error("[ClassRoom] Failed to parse message:", error);
+          }
         });
+
+        toast.success("실시간 자막에 연결되었습니다.");
+      } catch (error) {
+        console.error("[ClassRoom] Failed to setup subscription:", error);
+        toast.error("실시간 자막 연결에 실패했습니다.");
       }
     };
 
-    // 연결 성공 시 학생 정보 전송
-    const handleConnect = () => {
-      console.log("Connected to server");
-      socket.emit("room:join", {
-        studentCode: classCode,
-        studentInfo: studentInfo,
-      });
-      toast.success("실시간 자막에 연결되었습니다.");
-    };
+    // 구독 설정
+    setupSubscription();
 
-    // 연결 끊김 시
-    const handleDisconnect = () => {
-      console.log("Disconnected from server");
-      toast.info("실시간 자막 연결이 끊어졌습니다.");
-    };
-
-    // 에러 처리
-    const handleError = (error: string) => {
-      console.error("Socket error:", error);
-      toast.error(`연결 오류: ${error}`);
-    };
-
-    // 이벤트 리스너 등록
-    onSocketEvent("translation:update", handleTranslationUpdate);
-    onSocketEvent("connect", handleConnect);
-    onSocketEvent("disconnect", handleDisconnect);
-    onSocketEvent("error", handleError);
-
-    // 컴포넌트 언마운트 시 연결 해제
+    // 컴포넌트 언마운트 시 정리
     return () => {
-      offSocketEvent("translation:update", handleTranslationUpdate);
-      offSocketEvent("connect", handleConnect);
-      offSocketEvent("disconnect", handleDisconnect);
-      offSocketEvent("error", handleError);
-      disconnectSocket();
+      if (unsubscribe) {
+        unsubscribe();
+      }
+      // 주의: 다른 컴포넌트에서 사용 중일 수 있으므로 연결 해제하지 않음
+      // disconnectStompClient();
     };
-  }, [classCode, isLive, language, studentInfo]);
+  }, [classCode, isLive, language, wsEndpoint, subscribeUrl, publishUrl]);
 
   // 언어 변경 시 번역된 텍스트 재요청 (선택사항)
   useEffect(() => {
