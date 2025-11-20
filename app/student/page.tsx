@@ -77,6 +77,7 @@ export default function StudentPage() {
   if (currentClass && studentInfo) {
     return (
       <ClassRoom 
+        roomId={currentClass.roomId}
         classCode={currentClass.code}
         className={currentClass.name}
         language={currentClass.language}
@@ -135,7 +136,7 @@ export default function StudentPage() {
       // 입장하려는 수업 정보를 먼저 설정
       const classToEnter = { 
         roomId: roomInfo.roomId,
-        code: roomInfo.studentAuthCode, 
+        code: fullCode, // 입력한 전체 코드 사용 (studentAuthCode가 아닌 입력한 코드)
         name: roomInfo.roomName, 
         language: selectedLanguage, 
         isLive: isLive,
@@ -143,6 +144,7 @@ export default function StudentPage() {
         subscribeUrl: roomInfo.subscribeUrl,
         publishUrl: roomInfo.publishUrl,
       };
+      console.log("[StudentPage] Setting pending class:", classToEnter);
       setPendingClass(classToEnter);
       
       // 기존에 입력한 학생 정보가 있으면 기본값으로 설정
@@ -296,7 +298,13 @@ export default function StudentPage() {
     setShowStudentDialog(false);
     
     // 수업 페이지로 이동
-    setCurrentClass(pendingClass);
+    if (pendingClass) {
+      console.log("[StudentPage] Setting current class:", pendingClass);
+      setCurrentClass(pendingClass);
+    } else {
+      console.error("[StudentPage] pendingClass is null, cannot enter class");
+      toast.error('수업 정보를 불러올 수 없습니다.');
+    }
   };
 
   return (
@@ -451,11 +459,13 @@ export default function StudentPage() {
             </div>
             
             <div className="space-y-6">
-              <CodeInput
-                length={6}
-                onChange={handleCodeChange}
-                onComplete={handleCodeComplete}
-              />
+              <div className="flex justify-center">
+                <CodeInput
+                  length={6}
+                  onChange={handleCodeChange}
+                  onComplete={handleCodeComplete}
+                />
+              </div>
               
               <Button 
                 onClick={() => {

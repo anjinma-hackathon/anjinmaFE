@@ -269,5 +269,69 @@ export async function sendSttText(data: SttRequest): Promise<TranslationResponse
   }
 }
 
+// PDF 번역 요청 인터페이스
+export interface TranslatePdfRequest {
+  file: File;
+  language?: string; // 번역 대상 언어 코드 (ko, en, ja, zh, vi, es)
+  mode?: string; // 엔드포인트 선택: generate | chat
+  filename?: string;
+  progressToken?: string;
+}
+
+// PDF 번역 (multipart/form-data)
+export async function translatePdf(data: TranslatePdfRequest): Promise<Blob> {
+  try {
+    const url = getApiUrl('translate/pdf');
+    console.log('[API] POST Translate PDF:', url, {
+      filename: data.file.name,
+      language: data.language,
+      mode: data.mode,
+    });
+    
+    const formData = new FormData();
+    formData.append('file', data.file);
+    if (data.language) {
+      formData.append('language', data.language);
+    }
+    if (data.mode) {
+      formData.append('mode', data.mode);
+    }
+    if (data.filename) {
+      formData.append('filename', data.filename);
+    }
+    if (data.progressToken) {
+      formData.append('progressToken', data.progressToken);
+    }
+    
+    const response = await fetch(url, {
+      method: 'POST',
+      body: formData,
+      mode: 'cors',
+      credentials: 'omit',
+      // multipart/form-data는 브라우저가 자동으로 Content-Type을 설정하므로 헤더에 명시하지 않음
+    });
+
+    if (!response.ok) {
+      console.error('[API] Translate PDF Error:', response.status, response.statusText);
+      let errorText = '';
+      try {
+        errorText = await response.text();
+        console.error('[API] Error Response:', errorText);
+      } catch (e) {
+        // 응답 본문을 읽을 수 없는 경우 무시
+      }
+      throw new Error(`PDF 번역 실패: ${response.status} ${response.statusText}`);
+    }
+
+    // 응답은 application/pdf (binary)
+    const blob = await response.blob();
+    console.log('[API] PDF translation completed, blob size:', blob.size);
+    return blob;
+  } catch (error) {
+    console.error('Error translating PDF:', error);
+    throw error;
+  }
+}
+
 export { API_BASE_URL, SOCKET_URL };
 

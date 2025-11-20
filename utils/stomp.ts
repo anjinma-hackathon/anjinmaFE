@@ -1,4 +1,4 @@
-// STOMP WebSocket 클라이언트 연결 유틸리티
+// STOMP WebSocket 클라이언트 연결 유틸리티 (네이티브 WebSocket 사용)
 
 import { Client, IMessage } from '@stomp/stompjs';
 import { SOCKET_URL } from './api';
@@ -27,11 +27,21 @@ export function initStompClient(config: StompConfig): Client {
     stompClient = null;
   }
 
-  // WebSocket URL 구성 (wsEndpoint 사용)
-  // Spring Boot STOMP는 일반적으로 /ws/lecture와 같은 경로를 사용
-  let wsUrl = `${SOCKET_URL}${config.wsEndpoint}`;
+  // 네이티브 WebSocket URL 구성
+  // 중요: 네이티브 WebSocket은 wss:// 또는 ws://를 사용하며, /websocket, /info를 붙이지 않음
+  // 예: wss://anjinma-bak.bluerack.org/ws/lecture
+  const endpoint = config.wsEndpoint.startsWith('/') 
+    ? config.wsEndpoint 
+    : `/${config.wsEndpoint}`;
   
-  // HTTP를 WS로 변환
+  // SOCKET_URL의 마지막 슬래시 제거 후 endpoint 추가
+  const baseUrl = SOCKET_URL.endsWith('/') 
+    ? SOCKET_URL.slice(0, -1) 
+    : SOCKET_URL;
+  
+  let wsUrl = `${baseUrl}${endpoint}`;
+  
+  // HTTP를 WSS/WS로 변환 (네이티브 WebSocket 프로토콜)
   if (wsUrl.startsWith('http://')) {
     wsUrl = wsUrl.replace('http://', 'ws://');
   } else if (wsUrl.startsWith('https://')) {
@@ -48,20 +58,22 @@ export function initStompClient(config: StompConfig): Client {
     }
   }
   
-  console.log('[STOMP] Initializing WebSocket connection...');
+  // 최종 WebSocket URL (네이티브 WebSocket용)
+  const brokerURL = wsUrl;
+  
+  console.log('[STOMP] Initializing native WebSocket connection...');
   console.log('[STOMP] SOCKET_URL:', SOCKET_URL);
   console.log('[STOMP] wsEndpoint:', config.wsEndpoint);
-  console.log('[STOMP] Final WebSocket URL:', wsUrl);
+  console.log('[STOMP] Broker URL (native WebSocket):', brokerURL);
+  console.log('[STOMP] Note: Native WebSocket does NOT use /info endpoint');
 
-  // 네이티브 WebSocket 사용
-  // Spring Boot STOMP는 네이티브 WebSocket도 지원하지만, 
-  // 연결이 실패하면 백엔드 설정을 확인해야 함
+  // 네이티브 WebSocket 사용 (SockJS 사용 안 함)
+  // brokerURL을 직접 지정하여 네이티브 WebSocket 연결
   stompClient = new Client({
-    brokerURL: wsUrl,
+    brokerURL: brokerURL, // wss://.../ws/lecture 형식
     reconnectDelay: 5000,
-    heartbeatIncoming: 4000,
-    heartbeatOutgoing: 4000,
-    // 연결 시도 횟수 제한
+    heartbeatIncoming: 10000,
+    heartbeatOutgoing: 10000,
     connectionTimeout: 10000,
     debug: (str: string) => {
       if (process.env.NODE_ENV === 'development') {
@@ -84,35 +96,45 @@ export function initStompClient(config: StompConfig): Client {
   };
 
   stompClient.onWebSocketError = (event: any) => {
-    console.error('[STOMP] WebSocket Error occurred');
+    console.error('[STOMP] ========== Native WebSocket Error 발생 ==========');
     console.error('[STOMP] Error event:', event);
     console.error('[STOMP] Error type:', event?.type);
     console.error('[STOMP] Error target:', event?.target);
+    
+    // 현재 페이지 오리진 확인
+    if (typeof window !== 'undefined') {
+      console.error('[STOMP] Current page origin:', window.location.origin);
+      console.error('[STOMP] Current page URL:', window.location.href);
+    }
     
     // WebSocket 연결 실패 시 더 자세한 정보 제공
     if (event?.target) {
       const ws = event.target as WebSocket;
       console.error('[STOMP] WebSocket readyState:', ws?.readyState);
-      console.error('[STOMP] WebSocket URL:', ws?.url);
+      console.error('[STOMP] WebSocket URL:', ws?.url || brokerURL);
       console.error('[STOMP] WebSocket protocol:', ws?.protocol);
       console.error('[STOMP] WebSocket extensions:', ws?.extensions);
     }
     
-    // 백엔드 서버가 WebSocket을 지원하는지, URL이 올바른지 확인 필요
-    console.error('[STOMP] ========== WebSocket 연결 실패 ==========');
-    console.error('[STOMP] 연결 실패 가능 원인:');
-    console.error('[STOMP] 1. 백엔드 서버가 WebSocket 연결을 허용하지 않음');
-    console.error('[STOMP] 2. WebSocket URL이 잘못됨:', wsUrl);
-    console.error('[STOMP] 3. 백엔드가 SockJS를 사용 중일 수 있음');
-    console.error('[STOMP] 4. 방화벽 또는 프록시가 WebSocket 연결을 차단');
-    console.error('[STOMP] 5. SSL/TLS 인증서 문제');
-    console.error('[STOMP] 6. 백엔드 CORS 설정이 WebSocket을 허용하지 않음');
-    console.error('[STOMP] =========================================');
+    // 백엔드 서버가 WebSocket 연결을 지원하는지, URL이 올바른지 확인 필요
+    console.error('[STOMP] ========== 네이티브 WebSocket 연결 실패 가능 원인 ==========');
+    console.error('[STOMP] 1. WebSocket URL이 잘못됨:', brokerURL);
+    console.error('[STOMP]    올바른 형식: wss://anjinma-bak.bluerack.org/ws/lecture');
+    console.error('[STOMP]    잘못된 형식: wss://.../ws/lecture/info (SockJS 전용)');
+    console.error('[STOMP] 2. 백엔드 서버가 네이티브 WebSocket 연결을 허용하지 않음');
+    console.error('[STOMP] 3. 방화벽 또는 프록시가 WebSocket 연결을 차단');
+    console.error('[STOMP] 4. SSL/TLS 인증서 문제');
+    console.error('[STOMP] 5. 리버스 프록시(Nginx/ALB)의 Upgrade 헤더 미설정');
+    console.error('[STOMP] 6. 브라우저 네트워크 탭에서 wss://.../ws/lecture 101 Switching Protocols 확인 필요');
+    console.error('[STOMP] 7. /ws/lecture/info 요청이 발생하면 SockJS를 사용 중인 것임 (제거 필요)');
+    console.error('[STOMP] ============================================================');
     
     // 사용자에게 알림 (브라우저 환경에서만)
     if (typeof window !== 'undefined') {
-      // toast는 컴포넌트에서 처리하도록 함
-      console.warn('[STOMP] WebSocket 연결에 실패했습니다. 백엔드 서버 설정을 확인해주세요.');
+      console.warn('[STOMP] 네이티브 WebSocket 연결에 실패했습니다.');
+      console.warn('[STOMP] 브라우저 네트워크 탭에서 다음을 확인해주세요:');
+      console.warn('[STOMP] - wss://.../ws/lecture로 101 Switching Protocols 응답');
+      console.warn('[STOMP] - /ws/lecture/info 요청이 없어야 함 (SockJS 사용 시 발생)');
     }
   };
 
@@ -128,29 +150,51 @@ export function initStompClient(config: StompConfig): Client {
 // 연결 완료를 기다리는 함수
 export function waitForConnection(timeout: number = 10000): Promise<void> {
   return new Promise((resolve, reject) => {
-    // 이미 활성화되어 있으면 바로 resolve
-    if (stompClient?.active) {
-      resolve();
-      return;
-    }
-
     // 클라이언트가 없으면 에러
     if (!stompClient) {
       reject(new Error('STOMP client is not initialized'));
       return;
     }
 
+    // 이미 활성화되어 있고 연결되어 있으면 바로 resolve
+    // @stomp/stompjs에서 connected 상태 확인
+    if (stompClient.active && (stompClient as any).connected) {
+      console.log('[STOMP] Already connected, resolving immediately');
+      resolve();
+      return;
+    }
+
     // 연결 완료 콜백 등록
     const timer = setTimeout(() => {
+      console.error('[STOMP] Connection timeout after', timeout, 'ms');
       reject(new Error('STOMP connection timeout'));
     }, timeout);
 
-    connectCallbacks.push(() => {
+    const onConnect = () => {
       clearTimeout(timer);
+      console.log('[STOMP] Connection confirmed in waitForConnection');
       resolve();
-    });
+    };
 
-    // 이미 연결 시도 중이면 대기 (connectCallbacks가 onConnect에서 호출됨)
+    connectCallbacks.push(onConnect);
+
+    // 클라이언트가 활성화되지 않았으면 활성화
+    if (!stompClient.active) {
+      console.log('[STOMP] Client not active, activating...');
+      stompClient.activate();
+    }
+
+    // 이미 연결 중이면 짧은 간격으로 확인
+    let checkInterval: NodeJS.Timeout | null = null;
+    if (stompClient.active) {
+      checkInterval = setInterval(() => {
+        if (stompClient && stompClient.active && (stompClient as any).connected) {
+          clearInterval(checkInterval!);
+          clearTimeout(timer);
+          resolve();
+        }
+      }, 100);
+    }
   });
 }
 
@@ -172,8 +216,15 @@ export async function subscribeToChannel(
   subscribeUrl: string,
   callback: (message: IMessage) => void
 ): Promise<() => void> {
-  // 연결이 활성화될 때까지 대기
-  if (!stompClient?.active) {
+  // 연결이 완료될 때까지 대기
+  if (!stompClient) {
+    console.error('[STOMP] Client is not initialized. Cannot subscribe to:', subscribeUrl);
+    return () => {};
+  }
+
+  // 연결 상태 확인 및 대기
+  const isConnected = stompClient.active && (stompClient as any).connected;
+  if (!isConnected) {
     console.log('[STOMP] Waiting for connection before subscribing to:', subscribeUrl);
     try {
       await waitForConnection(10000);
@@ -183,8 +234,10 @@ export async function subscribeToChannel(
     }
   }
 
-  if (!stompClient?.active) {
-    console.warn('[STOMP] Client is not active. Cannot subscribe to:', subscribeUrl);
+  // 최종 연결 상태 확인
+  if (!stompClient || !stompClient.active || !(stompClient as any).connected) {
+    console.warn('[STOMP] Client is not connected. Cannot subscribe to:', subscribeUrl);
+    console.warn('[STOMP] Active:', stompClient?.active, 'Connected:', (stompClient as any)?.connected);
     return () => {};
   }
 
@@ -209,16 +262,27 @@ export async function subscribeToChannel(
 
 // 발행 (publishUrl로 메시지 전송)
 export function publishToChannel(publishUrl: string, body: any) {
-  if (!stompClient?.active) {
-    console.warn('[STOMP] Client is not active. Cannot publish to:', publishUrl);
+  if (!stompClient) {
+    console.warn('[STOMP] Client is not initialized. Cannot publish to:', publishUrl);
     return;
   }
 
-  stompClient.publish({
-    destination: publishUrl,
-    body: JSON.stringify(body),
-  });
+  const isConnected = stompClient.active && (stompClient as any).connected;
+  if (!isConnected) {
+    console.warn('[STOMP] Client is not connected. Cannot publish to:', publishUrl);
+    console.warn('[STOMP] Active:', stompClient.active, 'Connected:', (stompClient as any).connected);
+    return;
+  }
 
-  console.log('[STOMP] Published to:', publishUrl, body);
+  try {
+    stompClient.publish({
+      destination: publishUrl,
+      body: JSON.stringify(body),
+    });
+
+    console.log('[STOMP] Published to:', publishUrl, body);
+  } catch (error) {
+    console.error('[STOMP] Failed to publish:', error);
+  }
 }
 

@@ -73,7 +73,7 @@ export const CodeInput: React.FC<CodeInputProps> = ({
   };
 
   return (
-    <div className="flex gap-2 justify-center">
+    <div className="flex gap-2 justify-center items-center w-full">
       {code.map((digit, index) => (
         <input
           key={index}
@@ -83,7 +83,7 @@ export const CodeInput: React.FC<CodeInputProps> = ({
           onChange={(e) => handleChange(index, e.target.value)}
           onKeyDown={(e) => handleKeyDown(index, e)}
           onPaste={handlePaste}
-          className="w-12 h-16 text-center text-2xl border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white shadow-sm hover:border-gray-300 font-semibold text-gray-900"
+          className="w-12 h-16 text-center text-2xl border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-4 focus:ring-blue-100 outline-none transition-all bg-white shadow-sm hover:border-gray-300 font-semibold text-gray-900 flex-shrink-0"
           maxLength={1}
           id={`code-input-${index}`}
           autoComplete="off"

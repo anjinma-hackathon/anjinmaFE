@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "./ui/button";
-import { ArrowLeft, Radio, Upload, FileText, Languages, X } from "lucide-react";
+import { ArrowLeft, Radio, Upload, FileText, Languages, X, Download } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -18,11 +18,15 @@ import {
   disconnectStompClient,
   subscribeToChannel,
   getStompClient,
+  publishToChannel,
+  waitForConnection,
 } from "@/utils/stomp";
 import { toast, Toaster } from "sonner";
+import { translatePdf } from "@/utils/api";
 
 interface ClassRoomProps {
-  classCode: string;
+  roomId: number;
+  classCode?: string; // 표시용 (선택사항)
   className: string;
   language: string;
   isLive: boolean;
@@ -45,6 +49,7 @@ const languageLabels: { [key: string]: string } = {
 };
 
 export function ClassRoom({
+  roomId,
   classCode,
   className,
   language: initialLanguage,
@@ -62,16 +67,19 @@ export function ClassRoom({
   const [isTranslating, setIsTranslating] = useState(false);
   const [translatedContent, setTranslatedContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [translationProgress, setTranslationProgress] = useState<number | null>(null);
+  const [progressToken, setProgressToken] = useState<string | null>(null);
+  const [progressUnsubscribe, setProgressUnsubscribe] = useState<(() => void) | null>(null);
 
   const t = translations[language];
 
   // STOMP WebSocket 연결 및 실시간 번역 텍스트 수신
   useEffect(() => {
     if (typeof window === "undefined") return;
-    if (!isLive || !classCode || !wsEndpoint || !subscribeUrl) {
+    if (!isLive || !roomId || !wsEndpoint || !subscribeUrl) {
       console.log("[ClassRoom] Missing WebSocket config:", {
         isLive,
-        classCode,
+        roomId,
         wsEndpoint,
         subscribeUrl,
       });
@@ -95,57 +103,123 @@ export function ClassRoom({
     // STOMP 클라이언트 초기화 및 구독
     const setupSubscription = async () => {
       try {
+        // WebSocket 연결 완료 대기
+        await waitForConnection(10000);
+        console.log("[ClassRoom] WebSocket connection confirmed, sending join message");
+        
+        // 학생 입장 메시지 전송: /pub/attendance/{roomId} (StudentJoinMessage 형식)
+        if (studentInfo) {
+          const attendancePublishUrl = `/pub/attendance/${roomId}`; // roomId는 number
+            const joinMessage = {
+              studentId: studentInfo.studentId,
+              studentName: studentInfo.name,
+              language: language,
+            };
+            
+            // 연결이 완료된 후에만 발행
+            const client = getStompClient();
+            if (client && client.active && (client as any).connected) {
+              publishToChannel(attendancePublishUrl, joinMessage);
+              console.log("[ClassRoom] Student join message sent to:", attendancePublishUrl, joinMessage);
+            } else {
+              console.error("[ClassRoom] STOMP client is not connected. Cannot send join message.");
+              // 잠시 후 재시도
+              setTimeout(() => {
+                const retryClient = getStompClient();
+                if (retryClient && retryClient.active && (retryClient as any).connected) {
+                  publishToChannel(attendancePublishUrl, joinMessage);
+                  console.log("[ClassRoom] Student join message sent (retry) to:", attendancePublishUrl, joinMessage);
+                }
+              }, 1000);
+            }
+        }
+        
         // subscribeUrl로 구독 (연결 완료까지 자동 대기)
         unsubscribe = await subscribeToChannel(subscribeUrl, (message) => {
           try {
             const data = JSON.parse(message.body);
             console.log("[ClassRoom] Received message:", data);
 
-            // 번역된 텍스트 수신
-            // 백엔드에서 번역된 텍스트를 보내줌
-            // data 형식: { translatedText: "...", targetLanguage: "en" } 또는 { text: "...", translatedText: "...", targetLanguage: "en" }
-            if (data.translatedText) {
-              // targetLanguage와 현재 선택한 언어가 일치하는 번역만 표시
-              const targetLang =
-                data.targetLanguage || data.language || language;
+            // PDF 번역 진행 상황 메시지 처리
+            if (data.type === "progress" && data.progress !== undefined) {
+              console.log("[ClassRoom] PDF translation progress:", data.progress);
+              setTranslationProgress(data.progress);
+              if (data.progress === 100) {
+                toast.success("PDF 번역이 완료되었습니다.");
+                setTranslationProgress(null);
+              }
+              return;
+            }
 
-              // 언어 코드 정규화 (ko, en, zh, ja 등)
-              const normalizedTargetLang = targetLang
-                .toLowerCase()
-                .split("-")[0];
-              const normalizedCurrentLang = language
-                .toLowerCase()
-                .split("-")[0];
+            // PDF 번역 완료 메시지 처리 (Blob URL 포함)
+            if (data.type === "pdf_complete" && data.pdfUrl) {
+              console.log("[ClassRoom] PDF translation completed, URL:", data.pdfUrl);
+              // 기존 PDF URL이 있으면 해제
+              if (pdfUrl) {
+                URL.revokeObjectURL(pdfUrl);
+              }
+              setPdfUrl(data.pdfUrl);
+              setIsTranslating(false);
+              setTranslationProgress(null);
+              toast.success(`${languageLabels[language]}로 번역이 완료되었습니다.`);
+              return;
+            }
 
-              console.log("[ClassRoom] Received translation:", {
-                targetLanguage: normalizedTargetLang,
+            // SubtitleMessage 수신: sourceLanguage, targetLanguage, originalText, translatedText
+            // 백엔드가 번역을 처리하여 translatedText를 보내줌
+            if (!data.originalText && !data.translatedText) {
+              console.warn("[ClassRoom] No text content in message:", data);
+              return;
+            }
+
+            // translatedText가 있으면 우선 사용 (백엔드가 번역 처리)
+            // targetLanguage가 비어있어도 translatedText가 있으면 표시
+            let textToDisplay = data.translatedText || data.originalText || "";
+            
+            // targetLanguage가 있으면 언어 확인
+            if (data.targetLanguage) {
+              const targetLang = data.targetLanguage.toLowerCase().split("-")[0];
+              const normalizedCurrentLang = language.toLowerCase().split("-")[0];
+              
+              console.log("[ClassRoom] Received subtitle:", {
+                targetLanguage: targetLang,
                 currentLanguage: normalizedCurrentLang,
-                translatedText: data.translatedText.substring(0, 50) + "...",
+                hasTranslation: !!data.translatedText,
+                hasOriginal: !!data.originalText,
               });
 
-              if (
-                normalizedTargetLang === normalizedCurrentLang ||
-                normalizedTargetLang === language
-              ) {
-                setTranslatedContent((prev) => {
-                  // 이전 내용에 새로운 내용 추가 (줄바꿈 처리)
-                  const newContent = prev
-                    ? prev + "\n\n" + data.translatedText
-                    : data.translatedText;
-                  return newContent;
-                });
+              // 언어가 일치하면 번역 표시
+              if (targetLang === normalizedCurrentLang && data.translatedText) {
+                textToDisplay = data.translatedText;
+              } else if (data.translatedText) {
+                // 언어가 불일치하지만 번역이 있으면 번역 표시 (백엔드가 처리)
+                textToDisplay = data.translatedText;
               } else {
-                console.log("[ClassRoom] Language mismatch, ignoring:", {
-                  target: normalizedTargetLang,
-                  current: normalizedCurrentLang,
-                });
+                // 번역이 없으면 원본 표시
+                textToDisplay = data.originalText || "";
               }
-            } else if (data.text) {
-              // 원본 텍스트만 있는 경우 (학생 화면에서는 무시, 백엔드에서 번역 처리 예정)
-              console.log(
-                "[ClassRoom] Received original text without translation (waiting for backend to translate):",
-                data.text.substring(0, 50)
-              );
+            } else if (data.translatedText) {
+              // targetLanguage가 없어도 translatedText가 있으면 표시 (백엔드가 번역 처리)
+              textToDisplay = data.translatedText;
+              console.log("[ClassRoom] Using translatedText (no targetLanguage specified):", textToDisplay.substring(0, 50));
+            } else {
+              // translatedText도 없으면 originalText 사용
+              textToDisplay = data.originalText || "";
+              console.log("[ClassRoom] No translation available, using originalText:", textToDisplay.substring(0, 50));
+            }
+
+            // 메시지 추가 (중복 방지: 마지막 메시지와 같으면 추가하지 않음)
+            if (textToDisplay) {
+              setTranslatedContent((prev) => {
+                // 마지막 메시지와 같으면 추가하지 않음 (중복 방지)
+                const lastMessage = prev.split("\n\n").pop() || "";
+                if (lastMessage.trim() === textToDisplay.trim()) {
+                  console.log("[ClassRoom] Duplicate message detected, skipping");
+                  return prev;
+                }
+                const newContent = prev ? prev + "\n\n" + textToDisplay : textToDisplay;
+                return newContent;
+              });
             }
           } catch (error) {
             console.error("[ClassRoom] Failed to parse message:", error);
@@ -167,10 +241,14 @@ export function ClassRoom({
       if (unsubscribe) {
         unsubscribe();
       }
+      if (progressUnsubscribe) {
+        progressUnsubscribe();
+        setProgressUnsubscribe(null);
+      }
       // 주의: 다른 컴포넌트에서 사용 중일 수 있으므로 연결 해제하지 않음
       // disconnectStompClient();
     };
-  }, [classCode, isLive, language, wsEndpoint, subscribeUrl, publishUrl]);
+  }, [roomId, isLive, language, wsEndpoint, subscribeUrl, publishUrl, studentInfo]);
 
   // 언어 변경 시 번역된 텍스트 재요청 (선택사항)
   useEffect(() => {
@@ -202,21 +280,116 @@ export function ClassRoom({
     }
   };
 
-  const handleTranslate = () => {
+  const handleTranslate = async () => {
+    if (!pdfFile) {
+      toast.error('PDF 파일을 선택해주세요.');
+      return;
+    }
+
+    if (!wsEndpoint || !subscribeUrl) {
+      toast.error('WebSocket 연결이 필요합니다.');
+      return;
+    }
+
     setIsTranslating(true);
+    setTranslationProgress(0);
 
-    // 번역 시뮬레이션
-    setTimeout(() => {
-      const mockTranslations: { [key: string]: string } = {
-        ko: `[${languageLabels[language]}로 번역됨]\n\n이것은 번역된 PDF 내용의 예시입니다.\n\n1. 서론\n   이 문서는 학습 자료로 제공됩니다.\n\n2. 주요 내용\n   - 핵심 개념 설명\n   - 실습 예제\n   - 참고 자료\n\n3. 결론\n   학습한 내용을 복습하고 실제로 적용해보세요.`,
-        en: `[Translated to ${languageLabels[language]}]\n\nThis is an example of translated PDF content.\n\n1. Introduction\n   This document is provided as learning material.\n\n2. Main Content\n   - Key concept explanation\n   - Practice examples\n   - Reference materials\n\n3. Conclusion\n   Review what you've learned and try applying it in practice.`,
-        zh: `[翻译成${languageLabels[language]}]\n\n这是翻译后的PDF内容示例。\n\n1. 引言\n   本文档作为学习资料提供。\n\n2. 主要内容\n   - 核心概念说明\n   - 实践示例\n   - 参考资料\n\n3. 结论\n   复习所学内容并尝试实际应用。`,
-        ja: `[${languageLabels[language]}に翻訳]\n\nこれは翻訳されたPDFコンテンツの例です。\n\n1. 序論\n   この文書は学習資料として提供されます。\n\n2. 主な内容\n   - コアコンセプトの説明\n   - 実習例\n   - 参考資料\n\n3. 結論\n   学習した内容を復習し、実際に適用してみてください。`,
-      };
+    try {
+      // WebSocket 연결 확인
+      await waitForConnection(5000);
 
-      setTranslatedContent(mockTranslations[language] || mockTranslations.ko);
+      // roomId 사용 (prop에서 받음)
+
+      // PDF 번역 진행 상황 구독: /sub/rooms/{roomId}/translate/progress
+      const progressSubscribeUrl = `/sub/rooms/${roomId}/translate/progress`;
+      const unsubscribeProgress = await subscribeToChannel(progressSubscribeUrl, (message) => {
+        try {
+          const data = JSON.parse(message.body);
+          console.log("[ClassRoom] PDF translation progress:", data);
+          
+          if (data.progress !== undefined) {
+            setTranslationProgress(data.progress);
+            if (data.progress === 100) {
+              toast.success("PDF 번역이 완료되었습니다.");
+              setTranslationProgress(null);
+              if (unsubscribeProgress) {
+                unsubscribeProgress();
+              }
+            }
+          }
+          
+          // PDF 완료 메시지 처리
+          if (data.type === "pdf_complete" && data.pdfUrl) {
+            if (pdfUrl) {
+              URL.revokeObjectURL(pdfUrl);
+            }
+            setPdfUrl(data.pdfUrl);
+            setIsTranslating(false);
+            setTranslationProgress(null);
+            if (unsubscribeProgress) {
+              unsubscribeProgress();
+            }
+          }
+        } catch (error) {
+          console.error("[ClassRoom] Failed to parse progress message:", error);
+        }
+      });
+      setProgressUnsubscribe(() => unsubscribeProgress);
+
+      // PDF 번역 요청 발행: /pub/translate/pdf/{roomId}
+      const translatePublishUrl = `/pub/translate/pdf/${roomId}`;
+      const progressToken = `pdf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      setProgressToken(progressToken);
+
+      publishToChannel(translatePublishUrl, {
+        filename: pdfFile.name,
+        language: language,
+        mode: 'chat',
+        progressToken: progressToken,
+      });
+      console.log("[ClassRoom] PDF translation request published:", translatePublishUrl);
+
+      // PDF 파일을 FormData로 전송
+      const formData = new FormData();
+      formData.append('file', pdfFile);
+      formData.append('language', language);
+      formData.append('mode', 'chat');
+      formData.append('filename', pdfFile.name);
+      formData.append('progressToken', progressToken);
+
+      // PDF 번역 API 호출 (백엔드가 WebSocket으로 진행 상황을 보내고, 완료 시 PDF를 반환)
+      const translatedPdfBlob = await translatePdf({
+        file: pdfFile,
+        language: language,
+        mode: 'chat',
+        filename: pdfFile.name,
+        progressToken: progressToken,
+      });
+
+      // WebSocket으로 진행 상황을 받지 못한 경우 폴백: 직접 Blob 처리
+      if (translatedPdfBlob && translatedPdfBlob.size > 0) {
+        const translatedPdfUrl = URL.createObjectURL(translatedPdfBlob);
+        
+        if (pdfUrl) {
+          URL.revokeObjectURL(pdfUrl);
+        }
+        
+        setPdfUrl(translatedPdfUrl);
+        setPdfFile(new File([translatedPdfBlob], `translated_${pdfFile.name}`, { type: 'application/pdf' }));
+        setTranslationProgress(null);
+        toast.success(`${languageLabels[language]}로 번역이 완료되었습니다.`);
+      }
+    } catch (error) {
+      console.error('PDF 번역 실패:', error);
+      toast.error(error instanceof Error ? error.message : 'PDF 번역에 실패했습니다.');
+      setTranslationProgress(null);
+    } finally {
       setIsTranslating(false);
-    }, 2000);
+      if (progressUnsubscribe) {
+        progressUnsubscribe();
+        setProgressUnsubscribe(null);
+      }
+    }
   };
 
   return (
@@ -237,7 +410,11 @@ export function ClassRoom({
             <h1 className="text-gray-900">{className}</h1>
             <div className="flex items-center gap-3 text-sm text-gray-500">
               <span>
-                {t.code}: {classCode}
+                {classCode && (
+                  <>
+                    {t.code}: {classCode}
+                  </>
+                )}
               </span>
               {isLive && (
                 <>
@@ -327,24 +504,62 @@ export function ClassRoom({
                   {pdfFile.name}
                 </p>
 
-                <Button
-                  onClick={handleTranslate}
-                  disabled={isTranslating}
-                  className="w-full bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white"
-                >
-                  {isTranslating ? (
-                    <>
-                      <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2" />
-                      {t.translating}
-                    </>
-                  ) : (
-                    <>
-                      <Languages className="w-4 h-4 mr-2" />
-                      {t.translateTo}
-                      {languageLabels[language]}
-                    </>
+                {/* 번역 진행률 표시 */}
+                {translationProgress !== null && (
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
+                      <span>번역 진행 중...</span>
+                      <span>{translationProgress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div
+                        className="bg-indigo-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${translationProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Button
+                    onClick={handleTranslate}
+                    disabled={isTranslating}
+                    className="w-full bg-gradient-to-r from-indigo-500 to-blue-600 hover:from-indigo-600 hover:to-blue-700 text-white"
+                  >
+                    {isTranslating ? (
+                      <>
+                        <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent mr-2" />
+                        {t.translating}
+                      </>
+                    ) : (
+                      <>
+                        <Languages className="w-4 h-4 mr-2" />
+                        {t.translateTo}
+                        {languageLabels[language]}
+                      </>
+                    )}
+                  </Button>
+                  
+                  {pdfUrl && (
+                    <Button
+                      onClick={() => {
+                        if (pdfUrl && pdfFile) {
+                          const link = document.createElement('a');
+                          link.href = pdfUrl;
+                          link.download = pdfFile.name;
+                          document.body.appendChild(link);
+                          link.click();
+                          document.body.removeChild(link);
+                        }
+                      }}
+                      variant="outline"
+                      className="w-full border-indigo-200 text-indigo-600 hover:bg-indigo-50"
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      PDF 다운로드
+                    </Button>
                   )}
-                </Button>
+                </div>
               </Card>
             </div>
           )}

@@ -10,6 +10,8 @@ import {
   disconnectStompClient,
   publishToChannel,
   getStompClient,
+  waitForConnection,
+  subscribeToChannel,
 } from "@/utils/stomp";
 
 interface TeacherRoomProps {
@@ -104,11 +106,13 @@ export function TeacherRoom({
       }
 
       try {
-        // STOMP publishUrl로 메시지 발행
+        // 교수 자막 발행: /pub/lecture/{roomId} (SubtitleMessage 형식)
+        // SubtitleMessage: sourceLanguage, targetLanguage, originalText, translatedText
         publishToChannel(publishUrl, {
-          studentCode: studentCode,
-          text: text,
-          language: "ko",
+          sourceLanguage: "ko",
+          targetLanguage: "", // 백엔드가 학생별로 처리
+          originalText: text,
+          translatedText: "", // 백엔드가 번역 처리
         });
         console.log("[TeacherRoom] STT text published:", text);
       } catch (error) {
@@ -303,6 +307,7 @@ export function TeacherRoom({
 
     console.log("[TeacherRoom] Initializing STOMP client:", {
       wsEndpoint,
+      subscribeUrl,
       publishUrl,
     });
 
@@ -313,19 +318,78 @@ export function TeacherRoom({
       publishUrl,
     });
 
-    // 연결 상태 확인을 위한 인터벌
+    let unsubscribe: (() => void) | null = null;
+
+    // 연결 완료 대기 및 구독 설정
+    waitForConnection(10000)
+      .then(async () => {
+        setWsConnected(true);
+        console.log("[TeacherRoom] WebSocket connected successfully");
+        
+        // 학생 입장 명단 구독: ${subscribeUrl}/attendance = /sub/rooms/{roomId}/attendance
+        const attendanceSubscribeUrl = `${subscribeUrl}/attendance`;
+        if (subscribeUrl) {
+          unsubscribe = await subscribeToChannel(attendanceSubscribeUrl, (message) => {
+            try {
+              const data = JSON.parse(message.body);
+              console.log("[TeacherRoom] Received attendance snapshot:", data);
+              
+              // StudentListMessage 스냅샷 처리 (type: "snapshot", students: StudentJoinMessage[])
+              if (data.type === "snapshot" && Array.isArray(data.students)) {
+                // 함수형 업데이트로 클로저 문제 해결
+                setStudents((prevStudents) => {
+                  const previousStudentIds = new Set(prevStudents.map(s => s.studentId));
+                  const currentStudentIds = new Set(data.students.map((s: any) => s.studentId));
+                  
+                  // 이전 목록과 비교하여 신규 추가/제거 감지
+                  const newStudents = data.students.filter((s: any) => !previousStudentIds.has(s.studentId));
+                  const removedStudents = prevStudents.filter(s => !currentStudentIds.has(s.studentId));
+                  
+                  // 학생 목록 전체 갱신 (스냅샷 기준)
+                  const mappedStudents = data.students.map((s: any) => ({
+                    name: s.studentName,
+                    studentId: s.studentId,
+                  }));
+                  
+                  // 토스트 알림 (신규 추가/제거만)
+                  newStudents.forEach((s: any) => {
+                    toast.success(`${s.studentName} 학생이 입장했습니다.`);
+                  });
+                  removedStudents.forEach((s) => {
+                    toast.info(`${s.name} 학생이 퇴장했습니다.`);
+                  });
+                  
+                  return mappedStudents;
+                });
+              } else {
+                console.warn("[TeacherRoom] Invalid snapshot format:", data);
+              }
+            } catch (error) {
+              console.error("[TeacherRoom] Failed to parse attendance message:", error);
+            }
+          });
+          console.log("[TeacherRoom] Subscribed to attendance:", attendanceSubscribeUrl);
+        }
+      })
+      .catch((error) => {
+        console.error("[TeacherRoom] WebSocket connection failed:", error);
+        setWsConnected(false);
+      });
+
+    // 연결 상태 확인을 위한 인터벌 (폴백)
     const checkConnection = () => {
       const isActive = client?.active || false;
-      setWsConnected(isActive);
-      if (!isActive) {
-        console.warn("[TeacherRoom] WebSocket is not connected");
-      } else {
-        console.log("[TeacherRoom] WebSocket is connected");
-      }
+      setWsConnected((prev) => {
+        if (isActive !== prev) {
+          if (isActive) {
+            console.log("[TeacherRoom] WebSocket is connected");
+          } else {
+            console.warn("[TeacherRoom] WebSocket is not connected");
+          }
+        }
+        return isActive;
+      });
     };
-
-    // 초기 연결 상태 확인
-    checkConnection();
 
     // 주기적으로 연결 상태 확인 (2초마다)
     const connectionCheckInterval = setInterval(checkConnection, 2000);
@@ -333,6 +397,10 @@ export function TeacherRoom({
     return () => {
       // 인터벌 정리
       clearInterval(connectionCheckInterval);
+      // 구독 해제
+      if (unsubscribe) {
+        unsubscribe();
+      }
       // 컴포넌트 언마운트 시 연결 해제
       disconnectStompClient();
       setWsConnected(false);
