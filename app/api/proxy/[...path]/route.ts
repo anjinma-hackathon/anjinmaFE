@@ -146,43 +146,34 @@ export async function POST(
       );
     }
 
-      console.log('[Proxy] Response status:', response.status);
-      console.log('[Proxy] Response headers:', Object.fromEntries(response.headers.entries()));
+    console.log('[Proxy] Response status:', response.status);
+    console.log('[Proxy] Response headers:', Object.fromEntries(response.headers.entries()));
 
-      if (!response.ok) {
-        let errorText = '';
-        try {
-          errorText = await response.text();
-          console.error('[Proxy] POST Error Response:', response.status, errorText);
-        } catch (e) {
-          console.error('[Proxy] Failed to read error response:', e);
-        }
-        return NextResponse.json(
-          { error: 'Backend request failed', status: response.status, message: errorText },
-          { status: response.status }
-        );
+    if (!response.ok) {
+      let errorText = '';
+      try {
+        errorText = await response.text();
+        console.error('[Proxy] POST Error Response:', response.status, errorText);
+      } catch (e) {
+        console.error('[Proxy] Failed to read error response:', e);
       }
-
-      const data = await response.json();
-      console.log('[Proxy] Success Response:', data);
-
-      return NextResponse.json(data, {
-        status: response.status,
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, Accept',
-        },
-      });
-    } catch (fetchError) {
-      console.error('[Proxy] Fetch error:', fetchError);
-      console.error('[Proxy] Fetch error details:', {
-        message: fetchError instanceof Error ? fetchError.message : 'Unknown',
-        stack: fetchError instanceof Error ? fetchError.stack : undefined,
-        cause: fetchError instanceof Error ? fetchError.cause : undefined,
-      });
-      throw fetchError;
+      return NextResponse.json(
+        { error: 'Backend request failed', status: response.status, message: errorText },
+        { status: response.status }
+      );
     }
+
+    const data = await response.json();
+    console.log('[Proxy] Success Response:', data);
+
+    return NextResponse.json(data, {
+      status: response.status,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept',
+      },
+    });
   } catch (error) {
     console.error('[Proxy] POST Error:', error);
     console.error('[Proxy] Error details:', {

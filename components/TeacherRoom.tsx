@@ -40,9 +40,11 @@ export function TeacherRoom({
     Array<{ name: string; studentId: string }>
   >([]);
   const [isLoadingStudents, setIsLoadingStudents] = useState(false);
+  const [wsConnected, setWsConnected] = useState(false);
 
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const finalTranscriptRef = useRef<string>("");
+  const isRecordingRef = useRef(false);
 
   // 학생 목록 조회 (1번 API)
   const fetchStudents = useCallback(async () => {
@@ -84,6 +86,38 @@ export function TeacherRoom({
 
     return () => clearInterval(interval);
   }, [fetchStudents]);
+
+  // STT 텍스트를 백엔드로 전송 (STOMP WebSocket으로 발행)
+  const sendSttToBackend = useCallback(
+    (text: string) => {
+      if (!text.trim()) return;
+
+      // WebSocket 연결 확인
+      if (!wsConnected) {
+        console.warn(
+          "[TeacherRoom] WebSocket is not connected. Cannot send STT text."
+        );
+        toast.error(
+          "WebSocket 연결이 끊어져 있습니다. 메시지를 전송할 수 없습니다."
+        );
+        return;
+      }
+
+      try {
+        // STOMP publishUrl로 메시지 발행
+        publishToChannel(publishUrl, {
+          studentCode: studentCode,
+          text: text,
+          language: "ko",
+        });
+        console.log("[TeacherRoom] STT text published:", text);
+      } catch (error) {
+        console.error("Failed to publish STT text:", error);
+        toast.error("텍스트 전송에 실패했습니다.");
+      }
+    },
+    [publishUrl, studentCode, wsConnected]
+  );
 
   // 텍스트를 실시간으로 문단 단위로 포맷팅하는 함수 (cuckooso 스타일)
   const formatTextWithParagraphs = (
@@ -222,7 +256,8 @@ export function TeacherRoom({
     recognition.onend = () => {
       console.log("Speech recognition ended");
       // 연속 인식 모드이므로 녹음 중이면 다시 시작
-      if (isRecording) {
+      // isRecording 상태를 ref로 참조하여 최신 상태 사용
+      if (isRecordingRef.current) {
         try {
           recognition.start();
         } catch (error) {
@@ -238,7 +273,12 @@ export function TeacherRoom({
         recognitionRef.current.stop();
       }
     };
-  }, []); // 초기화는 한 번만
+  }, [sendSttToBackend]); // sendSttToBackend 의존성 추가
+
+  // isRecording 상태를 ref로 추적 (recognition.onend에서 사용)
+  useEffect(() => {
+    isRecordingRef.current = isRecording;
+  }, [isRecording]);
 
   // 녹음 상태 변경 시 시작/중지
   useEffect(() => {
@@ -257,24 +297,6 @@ export function TeacherRoom({
     }
   }, [isRecording]);
 
-  // STT 텍스트를 백엔드로 전송 (STOMP WebSocket으로 발행)
-  const sendSttToBackend = (text: string) => {
-    if (!text.trim()) return;
-
-    try {
-      // STOMP publishUrl로 메시지 발행
-      publishToChannel(publishUrl, {
-        studentCode: studentCode,
-        text: text,
-        language: "ko",
-      });
-      console.log("[TeacherRoom] STT text published:", text);
-    } catch (error) {
-      console.error("Failed to publish STT text:", error);
-      toast.error("텍스트 전송에 실패했습니다.");
-    }
-  };
-
   // STOMP WebSocket 연결 초기화
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -285,15 +307,35 @@ export function TeacherRoom({
     });
 
     // STOMP 클라이언트 초기화
-    initStompClient({
+    const client = initStompClient({
       wsEndpoint,
       subscribeUrl,
       publishUrl,
     });
 
+    // 연결 상태 확인을 위한 인터벌
+    const checkConnection = () => {
+      const isActive = client?.active || false;
+      setWsConnected(isActive);
+      if (!isActive) {
+        console.warn("[TeacherRoom] WebSocket is not connected");
+      } else {
+        console.log("[TeacherRoom] WebSocket is connected");
+      }
+    };
+
+    // 초기 연결 상태 확인
+    checkConnection();
+
+    // 주기적으로 연결 상태 확인 (2초마다)
+    const connectionCheckInterval = setInterval(checkConnection, 2000);
+
     return () => {
+      // 인터벌 정리
+      clearInterval(connectionCheckInterval);
       // 컴포넌트 언마운트 시 연결 해제
       disconnectStompClient();
+      setWsConnected(false);
     };
   }, [wsEndpoint, subscribeUrl, publishUrl]);
 
@@ -343,7 +385,19 @@ export function TeacherRoom({
             <h1 className="text-xl text-slate-800">강의명: {lectureName}</h1>
             <div className="flex items-center gap-2 mt-1">
               <span className="text-sm text-slate-600">
-                코드: {professorCode}
+                교수 코드: {professorCode}
+              </span>
+              <span className="text-sm text-slate-400">•</span>
+              <span className="text-sm text-slate-600">
+                학생 코드: {studentCode}
+              </span>
+              <span className="text-sm text-slate-400">•</span>
+              <span
+                className={`text-sm ${
+                  wsConnected ? "text-green-500" : "text-red-500"
+                }`}
+              >
+                {wsConnected ? "연결됨" : "연결 안됨"}
               </span>
               <span className="text-sm text-slate-400">•</span>
               <span className="text-sm text-red-500">라이브</span>
