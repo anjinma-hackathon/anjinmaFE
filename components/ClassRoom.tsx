@@ -1,14 +1,25 @@
 "use client";
 
-import { Button } from './ui/button';
-import { ArrowLeft, Radio, Upload, FileText, Languages, X } from 'lucide-react';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Textarea } from './ui/textarea';
-import { useState, useEffect } from 'react';
-import { Card } from './ui/card';
-import { translations, Language } from '@/utils/translations';
-import { initSocket, disconnectSocket, onSocketEvent, offSocketEvent } from '@/utils/socket';
-import { toast, Toaster } from 'sonner';
+import { Button } from "./ui/button";
+import { ArrowLeft, Radio, Upload, FileText, Languages, X } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
+import { Textarea } from "./ui/textarea";
+import { useState, useEffect } from "react";
+import { Card } from "./ui/card";
+import { translations, Language } from "@/utils/translations";
+import {
+  initSocket,
+  disconnectSocket,
+  onSocketEvent,
+  offSocketEvent,
+} from "@/utils/socket";
+import { toast, Toaster } from "sonner";
 
 interface ClassRoomProps {
   classCode: string;
@@ -24,20 +35,28 @@ interface ClassRoomProps {
 }
 
 const languageLabels: { [key: string]: string } = {
-  ko: '🇰🇷 한국어',
-  en: '🇺🇸 English',
-  zh: '🇨🇳 中文',
-  ja: '🇯🇵 日本語'
+  ko: "🇰🇷 한국어",
+  en: "🇺🇸 English",
+  zh: "🇨🇳 中文",
+  ja: "🇯🇵 日本語",
 };
 
-export function ClassRoom({ classCode, className, language: initialLanguage, isLive, studentInfo, selectedLanguage: initialSelectedLanguage, onExit }: ClassRoomProps) {
+export function ClassRoom({
+  classCode,
+  className,
+  language: initialLanguage,
+  isLive,
+  studentInfo,
+  selectedLanguage: initialSelectedLanguage,
+  onExit,
+}: ClassRoomProps) {
   const [language, setLanguage] = useState<Language>(initialSelectedLanguage);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [isTranslating, setIsTranslating] = useState(false);
-  const [translatedContent, setTranslatedContent] = useState('');
+  const [translatedContent, setTranslatedContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
-  
+
   const t = translations[language];
 
   // Socket.io 연결 및 실시간 번역 텍스트 수신
@@ -48,16 +67,18 @@ export function ClassRoom({ classCode, className, language: initialLanguage, isL
     const socket = initSocket(classCode);
 
     // 번역된 텍스트 수신 이벤트
-    const handleTranslationUpdate = (data: { 
-      studentCode: string; 
-      translatedText: string; 
+    const handleTranslationUpdate = (data: {
+      studentCode: string;
+      translatedText: string;
       targetLanguage: string;
     }) => {
       // 현재 선택한 언어와 일치하는 번역만 표시
       if (data.studentCode === classCode && data.targetLanguage === language) {
-        setTranslatedContent(prev => {
+        setTranslatedContent((prev) => {
           // 이전 내용에 새로운 내용 추가 (줄바꿈 처리)
-          const newContent = prev ? prev + '\n' + data.translatedText : data.translatedText;
+          const newContent = prev
+            ? prev + "\n" + data.translatedText
+            : data.translatedText;
           return newContent;
         });
       }
@@ -65,38 +86,38 @@ export function ClassRoom({ classCode, className, language: initialLanguage, isL
 
     // 연결 성공 시 학생 정보 전송
     const handleConnect = () => {
-      console.log('Connected to server');
-      socket.emit('room:join', {
+      console.log("Connected to server");
+      socket.emit("room:join", {
         studentCode: classCode,
         studentInfo: studentInfo,
       });
-      toast.success('실시간 자막에 연결되었습니다.');
+      toast.success("실시간 자막에 연결되었습니다.");
     };
 
     // 연결 끊김 시
     const handleDisconnect = () => {
-      console.log('Disconnected from server');
-      toast.info('실시간 자막 연결이 끊어졌습니다.');
+      console.log("Disconnected from server");
+      toast.info("실시간 자막 연결이 끊어졌습니다.");
     };
 
     // 에러 처리
     const handleError = (error: string) => {
-      console.error('Socket error:', error);
+      console.error("Socket error:", error);
       toast.error(`연결 오류: ${error}`);
     };
 
     // 이벤트 리스너 등록
-    onSocketEvent('translation:update', handleTranslationUpdate);
-    onSocketEvent('connect', handleConnect);
-    onSocketEvent('disconnect', handleDisconnect);
-    onSocketEvent('error', handleError);
+    onSocketEvent("translation:update", handleTranslationUpdate);
+    onSocketEvent("connect", handleConnect);
+    onSocketEvent("disconnect", handleDisconnect);
+    onSocketEvent("error", handleError);
 
     // 컴포넌트 언마운트 시 연결 해제
     return () => {
-      offSocketEvent('translation:update', handleTranslationUpdate);
-      offSocketEvent('connect', handleConnect);
-      offSocketEvent('disconnect', handleDisconnect);
-      offSocketEvent('error', handleError);
+      offSocketEvent("translation:update", handleTranslationUpdate);
+      offSocketEvent("connect", handleConnect);
+      offSocketEvent("disconnect", handleDisconnect);
+      offSocketEvent("error", handleError);
       disconnectSocket();
     };
   }, [classCode, isLive, language, studentInfo]);
@@ -121,28 +142,28 @@ export function ClassRoom({ classCode, className, language: initialLanguage, isL
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragging(false);
-    
+
     const file = e.dataTransfer.files[0];
-    if (file && file.type === 'application/pdf') {
+    if (file && file.type === "application/pdf") {
       setPdfFile(file);
       const url = URL.createObjectURL(file);
       setPdfUrl(url);
-      setTranslatedContent('');
+      setTranslatedContent("");
     }
   };
 
   const handleTranslate = () => {
     setIsTranslating(true);
-    
+
     // 번역 시뮬레이션
     setTimeout(() => {
       const mockTranslations: { [key: string]: string } = {
         ko: `[${languageLabels[language]}로 번역됨]\n\n이것은 번역된 PDF 내용의 예시입니다.\n\n1. 서론\n   이 문서는 학습 자료로 제공됩니다.\n\n2. 주요 내용\n   - 핵심 개념 설명\n   - 실습 예제\n   - 참고 자료\n\n3. 결론\n   학습한 내용을 복습하고 실제로 적용해보세요.`,
         en: `[Translated to ${languageLabels[language]}]\n\nThis is an example of translated PDF content.\n\n1. Introduction\n   This document is provided as learning material.\n\n2. Main Content\n   - Key concept explanation\n   - Practice examples\n   - Reference materials\n\n3. Conclusion\n   Review what you've learned and try applying it in practice.`,
         zh: `[翻译成${languageLabels[language]}]\n\n这是翻译后的PDF内容示例。\n\n1. 引言\n   本文档作为学习资料提供。\n\n2. 主要内容\n   - 核心概念说明\n   - 实践示例\n   - 参考资料\n\n3. 结论\n   复习所学内容并尝试实际应用。`,
-        ja: `[${languageLabels[language]}に翻訳]\n\nこれは翻訳されたPDFコンテンツの例です。\n\n1. 序論\n   この文書は学習資料として提供されます。\n\n2. 主な内容\n   - コアコンセプトの説明\n   - 実習例\n   - 参考資料\n\n3. 結論\n   学習した内容を復習し、実際に適用してみてください。`
+        ja: `[${languageLabels[language]}に翻訳]\n\nこれは翻訳されたPDFコンテンツの例です。\n\n1. 序論\n   この文書は学習資料として提供されます。\n\n2. 主な内容\n   - コアコンセプトの説明\n   - 実習例\n   - 参考資料\n\n3. 結論\n   学習した内容を復習し、実際に適用してみてください。`,
       };
-      
+
       setTranslatedContent(mockTranslations[language] || mockTranslations.ko);
       setIsTranslating(false);
     }, 2000);
@@ -165,7 +186,9 @@ export function ClassRoom({ classCode, className, language: initialLanguage, isL
           <div className="flex-1">
             <h1 className="text-gray-900">{className}</h1>
             <div className="flex items-center gap-3 text-sm text-gray-500">
-              <span>{t.code}: {classCode}</span>
+              <span>
+                {t.code}: {classCode}
+              </span>
               {isLive && (
                 <>
                   <span>•</span>
@@ -182,10 +205,13 @@ export function ClassRoom({ classCode, className, language: initialLanguage, isL
 
       {/* 수업 내용 */}
       <div className="max-w-7xl mx-auto p-8">
-        <div className={`grid gap-6 ${pdfFile ? 'grid-cols-3' : 'grid-cols-1'}`}>
+        <div
+          className={`grid gap-6 ${pdfFile ? "grid-cols-3" : "grid-cols-1"}`}
+        >
           {/* 수업 내용 영역 */}
-          <div className={`${pdfFile ? 'col-span-2' : 'col-span-1'}`}>
-            <div className="bg-white rounded-2xl shadow-lg p-6 border border-indigo-100"
+          <div className={`${pdfFile ? "col-span-2" : "col-span-1"}`}>
+            <div
+              className="bg-white rounded-2xl shadow-lg p-6 border border-indigo-100"
               onDragOver={!pdfFile ? handleDragOver : undefined}
               onDragLeave={!pdfFile ? handleDragLeave : undefined}
               onDrop={!pdfFile ? handleDrop : undefined}
@@ -195,7 +221,9 @@ export function ClassRoom({ classCode, className, language: initialLanguage, isL
                 value={translatedContent}
                 placeholder={t.classContent}
                 className={`min-h-[600px] resize-none border-2 rounded-xl p-4 text-gray-700 cursor-default ${
-                  isDragging && !pdfFile ? 'border-indigo-500 bg-indigo-50/50' : 'border-gray-200 bg-gray-50'
+                  isDragging && !pdfFile
+                    ? "border-indigo-500 bg-indigo-50/50"
+                    : "border-gray-200 bg-gray-50"
                 }`}
               />
               {!pdfFile && (
@@ -224,14 +252,14 @@ export function ClassRoom({ classCode, className, language: initialLanguage, isL
                     onClick={() => {
                       setPdfFile(null);
                       setPdfUrl(null);
-                      setTranslatedContent('');
+                      setTranslatedContent("");
                     }}
                     className="hover:bg-red-50 hover:text-red-600"
                   >
                     <X className="w-4 h-4" />
                   </Button>
                 </div>
-                
+
                 {/* PDF 표지 미리보기 */}
                 <div className="bg-gray-100 rounded-xl aspect-[3/4] mb-4 flex items-center justify-center overflow-hidden">
                   {pdfUrl ? (
@@ -245,8 +273,10 @@ export function ClassRoom({ classCode, className, language: initialLanguage, isL
                   )}
                 </div>
 
-                <p className="text-sm text-gray-600 mb-3 truncate">{pdfFile.name}</p>
-                
+                <p className="text-sm text-gray-600 mb-3 truncate">
+                  {pdfFile.name}
+                </p>
+
                 <Button
                   onClick={handleTranslate}
                   disabled={isTranslating}
@@ -260,7 +290,8 @@ export function ClassRoom({ classCode, className, language: initialLanguage, isL
                   ) : (
                     <>
                       <Languages className="w-4 h-4 mr-2" />
-                      {t.translateTo}{languageLabels[language]}
+                      {t.translateTo}
+                      {languageLabels[language]}
                     </>
                   )}
                 </Button>
