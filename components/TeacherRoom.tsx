@@ -47,6 +47,8 @@ export function TeacherRoom({
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const finalTranscriptRef = useRef<string>("");
   const isRecordingRef = useRef(false);
+  const subscribedChannelsRef = useRef<Set<string>>(new Set()); // 구독한 채널 추적 (이중 구독 방지)
+  const initRef = useRef<boolean>(false); // 초기화 가드 (StrictMode 이중 실행 방지)
 
   // 학생 목록 조회 (1번 API)
   const fetchStudents = useCallback(async () => {
@@ -120,7 +122,7 @@ export function TeacherRoom({
         toast.error("텍스트 전송에 실패했습니다.");
       }
     },
-    [publishUrl, studentCode, wsConnected]
+    [publishUrl, wsConnected]
   );
 
   // 텍스트를 실시간으로 문단 단위로 포맷팅하는 함수 (cuckooso 스타일)
@@ -305,10 +307,18 @@ export function TeacherRoom({
   useEffect(() => {
     if (typeof window === "undefined") return;
 
+    // 이중 초기화 방지 (StrictMode 대응)
+    if (initRef.current) {
+      console.log("[TeacherRoom] Already initialized, skipping duplicate init");
+      return;
+    }
+    initRef.current = true;
+
     console.log("[TeacherRoom] Initializing STOMP client:", {
       wsEndpoint,
       subscribeUrl,
       publishUrl,
+      roomId,
     });
 
     // STOMP 클라이언트 초기화
@@ -329,6 +339,15 @@ export function TeacherRoom({
         // 학생 입장 명단 구독: ${subscribeUrl}/attendance = /sub/rooms/{roomId}/attendance
         const attendanceSubscribeUrl = `${subscribeUrl}/attendance`;
         if (subscribeUrl) {
+          // 이중 구독 방지: 이미 구독한 채널이면 무시
+          if (subscribedChannelsRef.current.has(attendanceSubscribeUrl)) {
+            console.warn("[TeacherRoom] Already subscribed to:", attendanceSubscribeUrl, "skipping duplicate subscription");
+            return;
+          }
+          
+          console.log("[TeacherRoom] Subscribing to:", attendanceSubscribeUrl);
+          subscribedChannelsRef.current.add(attendanceSubscribeUrl);
+          
           unsubscribe = await subscribeToChannel(attendanceSubscribeUrl, (message) => {
             try {
               const data = JSON.parse(message.body);
@@ -395,12 +414,23 @@ export function TeacherRoom({
     const connectionCheckInterval = setInterval(checkConnection, 2000);
 
     return () => {
+      console.log("[TeacherRoom] Cleaning up WebSocket subscription");
+      initRef.current = false; // 초기화 플래그 리셋
+      
       // 인터벌 정리
       clearInterval(connectionCheckInterval);
       // 구독 해제
       if (unsubscribe) {
         unsubscribe();
+        unsubscribe = null;
       }
+      
+      // 구독 채널 추적 정리
+      if (subscribeUrl) {
+        const attendanceSubscribeUrl = `${subscribeUrl}/attendance`;
+        subscribedChannelsRef.current.delete(attendanceSubscribeUrl);
+      }
+      
       // 컴포넌트 언마운트 시 연결 해제
       disconnectStompClient();
       setWsConnected(false);
