@@ -559,6 +559,25 @@ export function ClassRoom({
     }
   };
 
+  // 파일 선택 핸들러 (모바일 클릭 업로드용)
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file && file.type === "application/pdf") {
+      setPdfFile(file);
+      const url = URL.createObjectURL(file);
+      setPdfUrl(url);
+      setTranslatedContent("");
+      setIsTranslated(false); // 새 파일 업로드 시 번역 상태 초기화
+      setSentences([]); // 자막 리스트도 같이 초기화
+      koreanBufferRef.current = "";
+      englishBufferRef.current = "";
+    } else if (file) {
+      toast.error("PDF 파일만 업로드할 수 있습니다.");
+    }
+    // input 초기화 (같은 파일을 다시 선택할 수 있도록)
+    e.target.value = "";
+  };
+
   const handleTranslate = async () => {
     if (!pdfFile) {
       toast.error("PDF 파일을 선택해주세요.");
@@ -827,9 +846,21 @@ export function ClassRoom({
               />
               {!pdfFile && (
                 <div className="mt-4 text-center">
+                  <input
+                    type="file"
+                    accept="application/pdf"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                    id="pdf-upload-input"
+                  />
                   <p className="text-sm text-gray-400 flex items-center justify-center gap-2">
                     <Upload className="w-4 h-4" />
-                    {t.dragPdf}
+                    <label
+                      htmlFor="pdf-upload-input"
+                      className="text-indigo-600 hover:text-indigo-700 underline cursor-pointer"
+                    >
+                      {t.dragPdf}
+                    </label>
                   </p>
                 </div>
               )}
@@ -940,6 +971,7 @@ export function ClassRoom({
           )}
         </div>
       </div>
+
       <Toaster />
     </div>
   );

@@ -129,8 +129,11 @@ export async function POST(
       const formDataEntries = Array.from(formData.entries());
       console.log('[Proxy] FormData entries count:', formDataEntries.length);
       formDataEntries.forEach(([key, value]) => {
-        if (value instanceof File) {
-          console.log(`[Proxy] FormData[${key}]: File - name: ${value.name}, size: ${value.size}, type: ${value.type}`);
+        // Node.js 환경에서는 File이 없으므로 다른 방법으로 체크
+        // value가 객체이고 name, size, type 속성이 있으면 파일로 간주
+        if (value && typeof value === 'object' && 'name' in value && 'size' in value && 'type' in value) {
+          const fileValue = value as any;
+          console.log(`[Proxy] FormData[${key}]: File - name: ${fileValue.name}, size: ${fileValue.size}, type: ${fileValue.type}`);
         } else {
           console.log(`[Proxy] FormData[${key}]: ${value}`);
         }
