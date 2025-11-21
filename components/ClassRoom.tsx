@@ -10,7 +10,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Textarea } from "./ui/textarea";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card } from "./ui/card";
 import { translations, Language } from "@/utils/translations";
 import {
@@ -72,7 +72,44 @@ export function ClassRoom({
   const [progressUnsubscribe, setProgressUnsubscribe] = useState<(() => void) | null>(null);
   const [isTranslated, setIsTranslated] = useState(false); // 번역 완료 여부
 
+  // ✅ 한/영 문장 버퍼
+  const koreanBufferRef = useRef<string>("");  // 현재 진행 중인 한글 문장
+  const englishBufferRef = useRef<string>(""); // 현재 진행 중인 영어 문장
+  const lastReceivedKrRef = useRef<string>(""); // 마지막으로 받은 한글 텍스트 (중복 방지)
+  const lastReceivedEnRef = useRef<string>(""); // 마지막으로 받은 영어 텍스트 (중복 방지)
+  const sentenceTimeoutRef = useRef<NodeJS.Timeout | null>(null); // 문장 완성 타이머
+
+  // ✅ 완성된 문장 리스트 (한글/영어 페어)
+  const [sentences, setSentences] = useState<{ kr: string; en: string }[]>([]);
+
+  const subscribedChannelsRef = useRef<Set<string>>(new Set()); // 구독한 채널 추적 (이중 구독 방지)
+  const lastMessageHashRef = useRef<Map<string, number>>(new Map()); // 메시지 해시 추적 (중복 메시지 방지)
+  const initRef = useRef<boolean>(false); // 초기화 가드 (StrictMode 이중 실행 방지)
+
   const t = translations[language];
+
+  // ✅ 문장 완성 판단 함수 (마침표/물음표/느낌표/… 로 끝나면 한 문장 완료로 봄)
+  const isSentenceComplete = (text: string) => {
+    return /[.!?…]\s*$/.test(text.trim());
+  };
+
+  // ✅ sentences → textarea 표시용 문자열로 변환
+  useEffect(() => {
+    if (sentences.length === 0) {
+      setTranslatedContent("");
+      return;
+    }
+
+    const content = sentences
+      .map((s) => {
+        if (s.kr && s.en) return `${s.kr}\n${s.en}`;
+        if (s.kr) return s.kr;
+        return s.en;
+      })
+      .join("\n\n");
+
+    setTranslatedContent(content);
+  }, [sentences]);
 
   // STOMP WebSocket 연결 및 실시간 번역 텍스트 수신
   useEffect(() => {
@@ -87,9 +124,17 @@ export function ClassRoom({
       return;
     }
 
+    // 이중 초기화 방지 (StrictMode 대응)
+    if (initRef.current) {
+      console.log("[ClassRoom] Already initialized, skipping duplicate init");
+      return;
+    }
+    initRef.current = true;
+
     console.log("[ClassRoom] Initializing STOMP client:", {
       wsEndpoint,
       subscribeUrl,
+      roomId,
     });
 
     let unsubscribe: (() => void) | null = null;
@@ -101,110 +146,334 @@ export function ClassRoom({
       publishUrl: publishUrl || "",
     });
 
+    // ✅ 한/영 버퍼에 새 텍스트를 추가하고,
+    //    어느 한쪽이라도 문장 끝나면 sentences에 [한글, 영어] 페어로 추가
+    const appendSubtitleChunk = (kr: string, en: string) => {
+      // 완전히 동일한 텍스트가 연속으로 들어오면 해당 언어만 무시 (중복 방지)
+      let shouldProcessKr = true;
+      let shouldProcessEn = true;
+      
+      if (kr && kr === lastReceivedKrRef.current) {
+        console.log("[ClassRoom] Duplicate Korean text, skipping:", kr.substring(0, 30));
+        shouldProcessKr = false;
+      }
+      if (en && en === lastReceivedEnRef.current) {
+        console.log("[ClassRoom] Duplicate English text, skipping:", en.substring(0, 30));
+        shouldProcessEn = false;
+      }
+
+      // 한글 버퍼에 추가 (중복 단어 제거만)
+      if (kr && shouldProcessKr) {
+        if (koreanBufferRef.current) {
+          const buffer = koreanBufferRef.current.trim();
+          const newText = kr.trim();
+          
+          // 단어 단위로 중복 체크
+          const bufferWords = buffer.split(/\s+/).filter((w: string) => w.length > 0);
+          const newWords = newText.split(/\s+/).filter((w: string) => w.length > 0);
+          
+          if (bufferWords.length > 0 && newWords.length > 0) {
+            // 버퍼의 마지막 부분과 새 텍스트의 시작 부분이 겹치는지 확인
+            let overlapCount = 0;
+            const maxCheck = Math.min(bufferWords.length, newWords.length);
+            
+            for (let i = 1; i <= maxCheck; i++) {
+              const bufferEnd = bufferWords.slice(-i).join(" ").toLowerCase();
+              const newStart = newWords.slice(0, i).join(" ").toLowerCase();
+              if (bufferEnd === newStart) {
+                overlapCount = i;
+              } else {
+                break;
+              }
+            }
+            
+            if (overlapCount > 0) {
+              // 겹치는 부분 제거하고 나머지만 추가
+              const remainingWords = newWords.slice(overlapCount);
+              if (remainingWords.length > 0) {
+                koreanBufferRef.current = buffer + " " + remainingWords.join(" ");
+              }
+            } else {
+              // 겹치지 않으면 추가
+              koreanBufferRef.current = buffer + " " + newText;
+            }
+          } else {
+            koreanBufferRef.current = buffer + " " + newText;
+          }
+        } else {
+          koreanBufferRef.current = kr;
+        }
+        lastReceivedKrRef.current = kr;
+      }
+
+      // 영어 버퍼에 추가 (중복 단어 제거만)
+      if (en && shouldProcessEn) {
+        if (englishBufferRef.current) {
+          const buffer = englishBufferRef.current.trim();
+          const newText = en.trim();
+          
+          // 단어 단위로 중복 체크
+          const bufferWords = buffer.split(/\s+/).filter((w: string) => w.length > 0);
+          const newWords = newText.split(/\s+/).filter((w: string) => w.length > 0);
+          
+          if (bufferWords.length > 0 && newWords.length > 0) {
+            // 버퍼의 마지막 부분과 새 텍스트의 시작 부분이 겹치는지 확인
+            let overlapCount = 0;
+            const maxCheck = Math.min(bufferWords.length, newWords.length);
+            
+            for (let i = 1; i <= maxCheck; i++) {
+              const bufferEnd = bufferWords.slice(-i).join(" ").toLowerCase();
+              const newStart = newWords.slice(0, i).join(" ").toLowerCase();
+              if (bufferEnd === newStart) {
+                overlapCount = i;
+              } else {
+                break;
+              }
+            }
+            
+            if (overlapCount > 0) {
+              // 겹치는 부분 제거하고 나머지만 추가
+              const remainingWords = newWords.slice(overlapCount);
+              if (remainingWords.length > 0) {
+                englishBufferRef.current = buffer + " " + remainingWords.join(" ");
+              }
+            } else {
+              // 겹치지 않으면 추가
+              englishBufferRef.current = buffer + " " + newText;
+            }
+          } else {
+            englishBufferRef.current = buffer + " " + newText;
+          }
+        } else {
+          englishBufferRef.current = en;
+        }
+        lastReceivedEnRef.current = en;
+      }
+
+      // 문장 완성 처리 함수
+      const completeSentence = () => {
+        const finalKr = koreanBufferRef.current.trim();
+        const finalEn = englishBufferRef.current.trim();
+
+        if (finalKr || finalEn) {
+          setSentences((prev) => {
+            // 강화된 중복 체크: 마지막 몇 개 문장과 비교
+            const checkCount = Math.min(3, prev.length); // 최근 3개 문장 확인
+            const recentSentences = prev.slice(-checkCount);
+            
+            for (const sentence of recentSentences) {
+              // 한글과 영어가 모두 동일하면 스킵
+              if (sentence.kr === finalKr && sentence.en === finalEn) {
+                console.log("[ClassRoom] Duplicate sentence found in recent sentences, skipping");
+                return prev;
+              }
+              // 한글이 동일하고 영어도 비슷하면 스킵 (영어가 완전히 비어있지 않은 경우)
+              if (sentence.kr === finalKr && finalEn && sentence.en && 
+                  sentence.en.toLowerCase() === finalEn.toLowerCase()) {
+                console.log("[ClassRoom] Duplicate Korean with similar English, skipping");
+                return prev;
+              }
+            }
+            
+            return [
+              ...prev,
+              { kr: finalKr, en: finalEn },
+            ];
+          });
+        }
+
+        koreanBufferRef.current = "";
+        englishBufferRef.current = "";
+        lastReceivedKrRef.current = "";
+        lastReceivedEnRef.current = "";
+      };
+
+      const krDone =
+        koreanBufferRef.current && isSentenceComplete(koreanBufferRef.current);
+      const enDone =
+        englishBufferRef.current && isSentenceComplete(englishBufferRef.current);
+
+      // 둘 중 하나라도 문장이 끝났으면 즉시 완성
+      if (krDone || enDone) {
+        // 기존 타이머 취소
+        if (sentenceTimeoutRef.current) {
+          clearTimeout(sentenceTimeoutRef.current);
+          sentenceTimeoutRef.current = null;
+        }
+        completeSentence();
+      } else {
+        // 문장 종료 기호가 없으면 타이머 설정 (3초 후 자동 완성)
+        // 새로운 텍스트가 들어올 때마다 타이머가 리셋됨
+        if (sentenceTimeoutRef.current) {
+          clearTimeout(sentenceTimeoutRef.current);
+        }
+        
+        // 버퍼에 내용이 있으면 타이머 시작
+        if (koreanBufferRef.current.trim() || englishBufferRef.current.trim()) {
+          sentenceTimeoutRef.current = setTimeout(() => {
+            // 타이머 실행 시점에 버퍼가 변경되지 않았는지 확인
+            const currentKr = koreanBufferRef.current.trim();
+            const currentEn = englishBufferRef.current.trim();
+            
+            if (currentKr || currentEn) {
+              console.log("[ClassRoom] Sentence timeout, completing sentence");
+              completeSentence();
+            }
+            
+            sentenceTimeoutRef.current = null;
+          }, 3000); // 3초 대기
+        }
+      }
+    };
+
     // STOMP 클라이언트 초기화 및 구독
     const setupSubscription = async () => {
       try {
         // WebSocket 연결 완료 대기
         await waitForConnection(10000);
         console.log("[ClassRoom] WebSocket connection confirmed, sending join message");
-        
+
         // 학생 입장 메시지 전송: /pub/attendance/{roomId} (StudentJoinMessage 형식)
         if (studentInfo) {
           const attendancePublishUrl = `/pub/attendance/${roomId}`; // roomId는 number
-            const joinMessage = {
-              studentId: studentInfo.studentId,
-              studentName: studentInfo.name,
-              language: language,
-            };
-            
-            // 연결이 완료된 후에만 발행
-            const client = getStompClient();
-            if (client && client.active && (client as any).connected) {
-              publishToChannel(attendancePublishUrl, joinMessage);
-              console.log("[ClassRoom] Student join message sent to:", attendancePublishUrl, joinMessage);
-            } else {
-              console.error("[ClassRoom] STOMP client is not connected. Cannot send join message.");
-              // 잠시 후 재시도
-              setTimeout(() => {
-                const retryClient = getStompClient();
-                if (retryClient && retryClient.active && (retryClient as any).connected) {
-                  publishToChannel(attendancePublishUrl, joinMessage);
-                  console.log("[ClassRoom] Student join message sent (retry) to:", attendancePublishUrl, joinMessage);
-                }
-              }, 1000);
-            }
+          const joinMessage = {
+            studentId: studentInfo.studentId,
+            studentName: studentInfo.name,
+            language: language,
+          };
+
+          // 연결이 완료된 후에만 발행
+          const client = getStompClient();
+          if (client && client.active && (client as any).connected) {
+            publishToChannel(attendancePublishUrl, joinMessage);
+            console.log("[ClassRoom] Student join message sent to:", attendancePublishUrl, joinMessage);
+          } else {
+            console.error("[ClassRoom] STOMP client is not connected. Cannot send join message.");
+            // 잠시 후 재시도
+            setTimeout(() => {
+              const retryClient = getStompClient();
+              if (retryClient && retryClient.active && (retryClient as any).connected) {
+                publishToChannel(attendancePublishUrl, joinMessage);
+                console.log("[ClassRoom] Student join message sent (retry) to:", attendancePublishUrl, joinMessage);
+              }
+            }, 1000);
+          }
         }
-        
+
+        // 이중 구독 방지: 이미 구독한 채널이면 무시
+        if (subscribedChannelsRef.current.has(subscribeUrl)) {
+          console.warn("[ClassRoom] Already subscribed to:", subscribeUrl, "skipping duplicate subscription");
+          return;
+        }
+
+        console.log("[ClassRoom] Subscribing to:", subscribeUrl);
+        subscribedChannelsRef.current.add(subscribeUrl);
+
         // subscribeUrl로 구독 (연결 완료까지 자동 대기)
         unsubscribe = await subscribeToChannel(subscribeUrl, (message) => {
+          // 메시지 중복 방지: 해시 기반 체크
+          const messageBody = message.body;
+          const messageHash = `${messageBody.length}|${messageBody.substring(0, 50)}`; // 간단한 해시
+          const now = Date.now();
+
+          // 같은 해시의 메시지가 1초 이내에 들어오면 무시
+          const lastTime = lastMessageHashRef.current.get(messageHash);
+          if (lastTime && now - lastTime < 1000) {
+            console.log(
+              "[ClassRoom] Duplicate message detected (hash), skipping:",
+              messageHash.substring(0, 50)
+            );
+            return;
+          }
+          lastMessageHashRef.current.set(messageHash, now);
+
+          // 오래된 해시 정리 (메모리 누수 방지)
+          if (lastMessageHashRef.current.size > 100) {
+            const entries = Array.from(lastMessageHashRef.current.entries());
+            entries.sort((a, b) => b[1] - a[1]); // 최신순 정렬
+            lastMessageHashRef.current = new Map(entries.slice(0, 50)); // 최신 50개만 유지
+          }
+
           try {
             const data = JSON.parse(message.body);
             console.log("[ClassRoom] Received message:", data);
 
             // PDF 번역 진행 상황 메시지 처리 (자막 채널에서도 수신 가능한 경우 대비)
             // 주의: 실제로는 /sub/translate/{progressToken}에서만 수신됨
-            if (data.type && ['started', 'ocr_started', 'ocr_page', 'translate_started', 'translate_page', 'overlay', 'completed', 'error'].includes(data.type)) {
-              console.log("[ClassRoom] PDF progress event received in subtitle channel (unexpected):", data);
+            if (
+              data.type &&
+              [
+                "started",
+                "ocr_started",
+                "ocr_page",
+                "translate_started",
+                "translate_page",
+                "overlay",
+                "completed",
+                "error",
+              ].includes(data.type)
+            ) {
+              console.log(
+                "[ClassRoom] PDF progress event received in subtitle channel (unexpected):",
+                data
+              );
               // 이 채널에서는 처리하지 않음 (별도 구독에서 처리)
               return;
             }
 
             // SubtitleMessage 수신: sourceLanguage, targetLanguage, originalText, translatedText
-            // 백엔드가 번역을 처리하여 translatedText를 보내줌
             if (!data.originalText && !data.translatedText) {
               console.warn("[ClassRoom] No text content in message:", data);
               return;
             }
 
-            // translatedText가 있으면 우선 사용 (백엔드가 번역 처리)
-            // targetLanguage가 비어있어도 translatedText가 있으면 표시
-            let textToDisplay = data.translatedText || data.originalText || "";
-            
-            // targetLanguage가 있으면 언어 확인
-            if (data.targetLanguage) {
+            const originalText = (data.originalText || "").trim();
+            const translatedText = (data.translatedText || "").trim();
+
+            console.log("[ClassRoom] Received subtitle data:", {
+              originalText: originalText.substring(0, 50),
+              translatedText: translatedText.substring(0, 50),
+              targetLanguage: data.targetLanguage,
+              currentLanguage: language,
+            });
+
+            // targetLanguage가 있으면 언어 확인, 없거나 빈 문자열이면 번역 텍스트 표시
+            let displayTranslatedText = translatedText;
+            if (data.targetLanguage && data.targetLanguage.trim() !== "") {
               const targetLang = data.targetLanguage.toLowerCase().split("-")[0];
               const normalizedCurrentLang = language.toLowerCase().split("-")[0];
-              
-              console.log("[ClassRoom] Received subtitle:", {
-                targetLanguage: targetLang,
-                currentLanguage: normalizedCurrentLang,
-                hasTranslation: !!data.translatedText,
-                hasOriginal: !!data.originalText,
+
+              console.log("[ClassRoom] Language check:", {
+                targetLang,
+                normalizedCurrentLang,
+                hasTranslation: !!translatedText,
               });
 
-              // 언어가 일치하면 번역 표시
-              if (targetLang === normalizedCurrentLang && data.translatedText) {
-                textToDisplay = data.translatedText;
-              } else if (data.translatedText) {
-                // 언어가 불일치하지만 번역이 있으면 번역 표시 (백엔드가 처리)
-                textToDisplay = data.translatedText;
+              // 언어가 일치하면 번역 텍스트 표시
+              if (targetLang === normalizedCurrentLang) {
+                displayTranslatedText = translatedText;
               } else {
-                // 번역이 없으면 원본 표시
-                textToDisplay = data.originalText || "";
+                // 언어가 불일치해도 번역 텍스트가 있으면 일단 표시
+                displayTranslatedText = translatedText;
+                console.log(
+                  "[ClassRoom] Language mismatch but showing translation:",
+                  targetLang,
+                  "!=",
+                  normalizedCurrentLang
+                );
               }
-            } else if (data.translatedText) {
-              // targetLanguage가 없어도 translatedText가 있으면 표시 (백엔드가 번역 처리)
-              textToDisplay = data.translatedText;
-              console.log("[ClassRoom] Using translatedText (no targetLanguage specified):", textToDisplay.substring(0, 50));
             } else {
-              // translatedText도 없으면 originalText 사용
-              textToDisplay = data.originalText || "";
-              console.log("[ClassRoom] No translation available, using originalText:", textToDisplay.substring(0, 50));
+              displayTranslatedText = translatedText;
+              console.log("[ClassRoom] No targetLanguage, showing translation:", !!translatedText);
             }
 
-            // 메시지 추가 (중복 방지: 마지막 메시지와 같으면 추가하지 않음)
-            if (textToDisplay) {
-              setTranslatedContent((prev) => {
-                // 마지막 메시지와 같으면 추가하지 않음 (중복 방지)
-                const lastMessage = prev.split("\n\n").pop() || "";
-                if (lastMessage.trim() === textToDisplay.trim()) {
-                  console.log("[ClassRoom] Duplicate message detected, skipping");
-                  return prev;
-                }
-                const newContent = prev ? prev + "\n\n" + textToDisplay : textToDisplay;
-                return newContent;
-              });
-            }
+            console.log(
+              "[ClassRoom] Final displayTranslatedText:",
+              displayTranslatedText.substring(0, 50)
+            );
+
+            // ✅ 여기에서 한/영 버퍼에 추가하고, 문장 완성되면 sentences에 push
+            appendSubtitleChunk(originalText, displayTranslatedText);
           } catch (error) {
             console.error("[ClassRoom] Failed to parse message:", error);
           }
@@ -222,22 +491,44 @@ export function ClassRoom({
 
     // 컴포넌트 언마운트 시 정리
     return () => {
+      console.log("[ClassRoom] Cleaning up WebSocket subscription");
+      initRef.current = false; // 초기화 플래그 리셋
+
       if (unsubscribe) {
         unsubscribe();
+        unsubscribe = null;
       }
       if (progressUnsubscribe) {
         progressUnsubscribe();
         setProgressUnsubscribe(null);
       }
-      // 주의: 다른 컴포넌트에서 사용 중일 수 있으므로 연결 해제하지 않음
-      // disconnectStompClient();
+
+      // 구독 채널 추적 정리
+      subscribedChannelsRef.current.delete(subscribeUrl);
+
+      // 타이머 정리
+      if (sentenceTimeoutRef.current) {
+        clearTimeout(sentenceTimeoutRef.current);
+        sentenceTimeoutRef.current = null;
+      }
+
+      // 남아 있는 버퍼를 마지막 문장으로 정리 (필요하면)
+      const remainingKorean = koreanBufferRef.current.trim();
+      const remainingEnglish = englishBufferRef.current.trim();
+      if (remainingKorean || remainingEnglish) {
+        setSentences((prev) => [
+          ...prev,
+          { kr: remainingKorean, en: remainingEnglish },
+        ]);
+      }
+
+      koreanBufferRef.current = "";
+      englishBufferRef.current = "";
     };
-  }, [roomId, isLive, language, wsEndpoint, subscribeUrl, publishUrl, studentInfo]);
+  }, [roomId, isLive, language, wsEndpoint, subscribeUrl, publishUrl, studentInfo, progressUnsubscribe]);
 
   // 언어 변경 시 번역된 텍스트 재요청 (선택사항)
   useEffect(() => {
-    // 언어 변경 시 현재 내용을 클리어할 수도 있음
-    // 또는 백엔드에 언어 변경 알림을 보낼 수도 있음
     // 여기서는 내용을 유지하도록 함
   }, [language]);
 
@@ -262,17 +553,20 @@ export function ClassRoom({
       setPdfUrl(url);
       setTranslatedContent("");
       setIsTranslated(false); // 새 파일 업로드 시 번역 상태 초기화
+      setSentences([]); // 자막 리스트도 같이 초기화
+      koreanBufferRef.current = "";
+      englishBufferRef.current = "";
     }
   };
 
   const handleTranslate = async () => {
     if (!pdfFile) {
-      toast.error('PDF 파일을 선택해주세요.');
+      toast.error("PDF 파일을 선택해주세요.");
       return;
     }
 
     if (!wsEndpoint) {
-      toast.error('WebSocket 연결이 필요합니다.');
+      toast.error("WebSocket 연결이 필요합니다.");
       return;
     }
 
@@ -292,90 +586,106 @@ export function ClassRoom({
       // PDF 번역 진행 상황 구독: /sub/translate/{progressToken}
       const progressSubscribeUrl = `/sub/translate/${progressToken}`;
       console.log("[ClassRoom] Subscribing to PDF progress:", progressSubscribeUrl);
-      
-      progressUnsubscribeFn = await subscribeToChannel(progressSubscribeUrl, (message) => {
-        try {
-          const evt = JSON.parse(message.body);
-          console.log("[ClassRoom] PDF translation progress event:", evt);
 
-          // 이벤트 타입에 따라 처리
-          switch (evt.type) {
-            case 'started':
-              console.log("[ClassRoom] PDF translation started");
-              setTranslationProgress(0);
-              toast.info('PDF 번역이 시작되었습니다.');
-              break;
+      progressUnsubscribeFn = await subscribeToChannel(
+        progressSubscribeUrl,
+        (message) => {
+          try {
+            const evt = JSON.parse(message.body);
+            console.log("[ClassRoom] PDF translation progress event:", evt);
 
-            case 'ocr_started':
-              console.log("[ClassRoom] OCR started");
-              toast.info('OCR 처리 중...');
-              break;
+            // 이벤트 타입에 따라 처리
+            switch (evt.type) {
+              case "started":
+                console.log("[ClassRoom] PDF translation started");
+                setTranslationProgress(0);
+                toast.info("PDF 번역이 시작되었습니다.");
+                break;
 
-            case 'ocr_page':
-              if (evt.current && evt.total) {
-                const progress = Math.round((evt.current / evt.total) * 30); // OCR은 30%까지
-                setTranslationProgress(progress);
-                console.log(`[ClassRoom] OCR page ${evt.current}/${evt.total}`);
-              }
-              break;
+              case "ocr_started":
+                console.log("[ClassRoom] OCR started");
+                toast.info("OCR 처리 중...");
+                break;
 
-            case 'translate_started':
-              console.log("[ClassRoom] Translation started");
-              setTranslationProgress(30);
-              toast.info('번역 중...');
-              break;
+              case "ocr_page":
+                if (evt.current && evt.total) {
+                  const progress = Math.round(
+                    (evt.current / evt.total) * 30
+                  ); // OCR은 30%까지
+                  setTranslationProgress(progress);
+                  console.log(`[ClassRoom] OCR page ${evt.current}/${evt.total}`);
+                }
+                break;
 
-            case 'translate_page':
-              if (evt.current && evt.total) {
-                // OCR 30% + 번역 60% = 90%까지
-                const progress = 30 + Math.round((evt.current / evt.total) * 60);
-                setTranslationProgress(progress);
-                console.log(`[ClassRoom] Translate page ${evt.current}/${evt.total}`);
-              }
-              break;
+              case "translate_started":
+                console.log("[ClassRoom] Translation started");
+                setTranslationProgress(30);
+                toast.info("번역 중...");
+                break;
 
-            case 'overlay':
-              console.log("[ClassRoom] PDF overlay (synthesizing)");
-              setTranslationProgress(90);
-              toast.info('PDF 합성 중...');
-              break;
+              case "translate_page":
+                if (evt.current && evt.total) {
+                  // OCR 30% + 번역 60% = 90%까지
+                  const progress =
+                    30 + Math.round((evt.current / evt.total) * 60);
+                  setTranslationProgress(progress);
+                  console.log(
+                    `[ClassRoom] Translate page ${evt.current}/${evt.total}`
+                  );
+                }
+                break;
 
-            case 'completed':
-              console.log("[ClassRoom] PDF translation completed");
-              setTranslationProgress(100);
-              toast.success('PDF 번역이 완료되었습니다.');
-              // 구독 해제
-              if (progressUnsubscribeFn) {
-                progressUnsubscribeFn();
-                progressUnsubscribeFn = null;
-              }
-              break;
+              case "overlay":
+                console.log("[ClassRoom] PDF overlay (synthesizing)");
+                setTranslationProgress(90);
+                toast.info("PDF 합성 중...");
+                break;
 
-            case 'error':
-              console.error("[ClassRoom] PDF translation error:", evt.message);
-              toast.error(evt.message || 'PDF 번역 중 오류가 발생했습니다.');
-              setTranslationProgress(null);
-              setIsTranslating(false);
-              // 구독 해제
-              if (progressUnsubscribeFn) {
-                progressUnsubscribeFn();
-                progressUnsubscribeFn = null;
-              }
-              return; // 에러 시 함수 종료
+              case "completed":
+                console.log("[ClassRoom] PDF translation completed");
+                setTranslationProgress(100);
+                toast.success("PDF 번역이 완료되었습니다.");
+                // 구독 해제
+                if (progressUnsubscribeFn) {
+                  progressUnsubscribeFn();
+                  progressUnsubscribeFn = null;
+                }
+                break;
 
-            default:
-              console.log("[ClassRoom] Unknown progress event type:", evt.type);
+              case "error":
+                console.error(
+                  "[ClassRoom] PDF translation error:",
+                  evt.message
+                );
+                toast.error(
+                  evt.message || "PDF 번역 중 오류가 발생했습니다."
+                );
+                setTranslationProgress(null);
+                setIsTranslating(false);
+                // 구독 해제
+                if (progressUnsubscribeFn) {
+                  progressUnsubscribeFn();
+                  progressUnsubscribeFn = null;
+                }
+                return; // 에러 시 함수 종료
+
+              default:
+                console.log(
+                  "[ClassRoom] Unknown progress event type:",
+                  evt.type
+                );
+            }
+          } catch (error) {
+            console.error("[ClassRoom] Failed to parse progress event:", error);
           }
-        } catch (error) {
-          console.error("[ClassRoom] Failed to parse progress event:", error);
         }
-      });
+      );
 
       // PDF 번역 API 호출 (progressToken 포함)
       const translatedPdfBlob = await translatePdf({
         file: pdfFile,
         language: language,
-        mode: 'chat',
+        mode: "chat",
         filename: pdfFile.name.replace(/\.[^/.]+$/, ""), // 확장자 제외
         progressToken: progressToken,
       });
@@ -383,25 +693,33 @@ export function ClassRoom({
       // 번역된 PDF를 Blob URL로 생성하여 표시
       if (translatedPdfBlob && translatedPdfBlob.size > 0) {
         const translatedPdfUrl = URL.createObjectURL(translatedPdfBlob);
-        
+
         // 기존 PDF URL이 있으면 해제
         if (pdfUrl) {
           URL.revokeObjectURL(pdfUrl);
         }
-        
+
         // 번역된 PDF로 교체
         setPdfUrl(translatedPdfUrl);
-        setPdfFile(new File([translatedPdfBlob], `translated_${pdfFile.name}`, { type: 'application/pdf' }));
+        setPdfFile(
+          new File([translatedPdfBlob], `translated_${pdfFile.name}`, {
+            type: "application/pdf",
+          })
+        );
         setIsTranslated(true); // 번역 완료 표시
-        
+
         setTranslationProgress(null);
         // completed 이벤트에서 이미 토스트 표시됨
       } else {
-        throw new Error('번역된 PDF 파일을 받지 못했습니다.');
+        throw new Error("번역된 PDF 파일을 받지 못했습니다.");
       }
     } catch (error) {
-      console.error('PDF 번역 실패:', error);
-      toast.error(error instanceof Error ? error.message : 'PDF 번역에 실패했습니다.');
+      console.error("PDF 번역 실패:", error);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "PDF 번역에 실패했습니다."
+      );
       setTranslationProgress(null);
     } finally {
       setIsTranslating(false);
@@ -505,6 +823,9 @@ export function ClassRoom({
                       setPdfUrl(null);
                       setTranslatedContent("");
                       setIsTranslated(false);
+                      setSentences([]);
+                      koreanBufferRef.current = "";
+                      englishBufferRef.current = "";
                     }}
                     className="hover:bg-red-50 hover:text-red-600"
                   >
@@ -559,7 +880,7 @@ export function ClassRoom({
                     <Button
                       onClick={() => {
                         if (pdfUrl && pdfFile) {
-                          const link = document.createElement('a');
+                          const link = document.createElement("a");
                           link.href = pdfUrl;
                           link.download = pdfFile.name;
                           document.body.appendChild(link);
