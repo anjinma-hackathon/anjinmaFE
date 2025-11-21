@@ -127,14 +127,14 @@ export default function ProfessorPage() {
     <div className="min-h-screen bg-slate-100">
       {/* 왼쪽 위 텍스트 */}
       <div className="p-6 border-b border-slate-300">
-        <h1 className="text-2xl text-slate-800">TransClass 교수용</h1>
+        <h1 className="text-2xl text-slate-800">ClassOnAir 교수용</h1>
       </div>
 
       {/* 가운데 카드 */}
       <div className="flex items-center justify-center min-h-[calc(100vh-120px)]">
         <div className="bg-white rounded-3xl shadow-lg p-10 w-full max-w-lg">
           <div className="text-center mb-8">
-            <h2 className="text-3xl text-slate-800 mb-3">TransClass</h2>
+            <h2 className="text-3xl text-slate-800 mb-3">ClassOnAir</h2>
             <p className="text-slate-500">옵션을 선택해주세요</p>
           </div>
 
