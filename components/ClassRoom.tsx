@@ -701,29 +701,59 @@ export function ClassRoom({
 
         // 번역된 PDF로 교체
         setPdfUrl(translatedPdfUrl);
+        const translatedFileName = `translated_${pdfFile.name}`;
         setPdfFile(
-          new File([translatedPdfBlob], `translated_${pdfFile.name}`, {
+          new File([translatedPdfBlob], translatedFileName, {
             type: "application/pdf",
           })
         );
         setIsTranslated(true); // 번역 완료 표시
 
         setTranslationProgress(null);
-        // completed 이벤트에서 이미 토스트 표시됨
+        
+        // ✅ 번역 완료 시 자동 다운로드
+        try {
+          const link = document.createElement("a");
+          link.href = translatedPdfUrl;
+          link.download = translatedFileName;
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          console.log("[ClassRoom] PDF automatically downloaded:", translatedFileName);
+        } catch (downloadError) {
+          console.error("[ClassRoom] Failed to auto-download PDF:", downloadError);
+          toast.error("PDF 다운로드에 실패했습니다. 수동으로 다운로드해주세요.");
+        }
       } else {
         throw new Error("번역된 PDF 파일을 받지 못했습니다.");
       }
     } catch (error) {
       console.error("PDF 번역 실패:", error);
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "PDF 번역에 실패했습니다."
-      );
+      
+      // 에러 타입에 따라 다른 메시지 표시
+      let errorMessage = "PDF 번역에 실패했습니다.";
+      if (error instanceof TypeError && error.message.includes('Failed to fetch')) {
+        errorMessage = "네트워크 오류가 발생했습니다. 연결을 확인해주세요.";
+      } else if (error instanceof Error) {
+        errorMessage = error.message;
+      }
+      
+      toast.error(errorMessage);
       setTranslationProgress(null);
+      setIsTranslating(false);
+      
+      // 구독 해제
+      if (progressUnsubscribeFn) {
+        progressUnsubscribeFn();
+        progressUnsubscribeFn = null;
+      }
+      if (progressUnsubscribe) {
+        progressUnsubscribe();
+        setProgressUnsubscribe(null);
+      }
     } finally {
       setIsTranslating(false);
-      // 구독 해제
+      // 구독 해제 (에러가 발생하지 않은 경우)
       if (progressUnsubscribeFn) {
         progressUnsubscribeFn();
       }

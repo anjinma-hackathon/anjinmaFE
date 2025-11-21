@@ -210,19 +210,32 @@ export async function POST(
     // PDF 바이너리 응답인 경우 바이너리로 패스스루
     if (isPdfResponse) {
       console.log('[Proxy] PDF binary response detected, passing through');
+      
+      // Content-Encoding 헤더 제거 (바이너리는 압축되지 않아야 함)
       const arrayBuffer = await response.arrayBuffer();
       
-      // 응답 헤더 복사
+      // 응답 헤더 복사 (Content-Encoding 제외)
       const responseHeaders = new Headers();
       response.headers.forEach((value, key) => {
-        responseHeaders.set(key, value);
+        // Content-Encoding, Transfer-Encoding 제거 (바이너리 응답에는 불필요)
+        if (key.toLowerCase() !== 'content-encoding' && key.toLowerCase() !== 'transfer-encoding') {
+          responseHeaders.set(key, value);
+        }
       });
+      
+      // Content-Type 명시적으로 설정
+      responseHeaders.set('Content-Type', 'application/pdf');
+      
+      // Content-Length 설정
+      responseHeaders.set('Content-Length', arrayBuffer.byteLength.toString());
       
       // CORS 헤더 추가
       responseHeaders.set('Access-Control-Allow-Origin', '*');
       responseHeaders.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
       responseHeaders.set('Access-Control-Allow-Headers', 'Content-Type, Accept');
 
+      console.log('[Proxy] PDF response size:', arrayBuffer.byteLength, 'bytes');
+      
       return new NextResponse(arrayBuffer, {
         status: response.status,
         headers: responseHeaders,
