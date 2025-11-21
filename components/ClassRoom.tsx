@@ -1,7 +1,15 @@
 "use client";
 
 import { Button } from "./ui/button";
-import { ArrowLeft, Radio, Upload, FileText, Languages, X, Download } from "lucide-react";
+import {
+  ArrowLeft,
+  Radio,
+  Upload,
+  FileText,
+  Languages,
+  X,
+  Download,
+} from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -10,7 +18,7 @@ import {
   SelectValue,
 } from "./ui/select";
 import { Textarea } from "./ui/textarea";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card } from "./ui/card";
 import { translations, Language } from "@/utils/translations";
 import {
@@ -23,6 +31,61 @@ import {
 } from "@/utils/stomp";
 import { toast, Toaster } from "sonner";
 import { translatePdf } from "@/utils/api";
+
+// 한 글자씩 애니메이션으로 표시하는 컴포넌트
+function AnimatedSentence({
+  sentence,
+  isNew,
+}: {
+  sentence: string;
+  isNew?: boolean;
+}) {
+  const [displayedChars, setDisplayedChars] = useState(0);
+
+  useEffect(() => {
+    // 새 문장이면 애니메이션 시작, 기존 문장이면 즉시 표시
+    if (!isNew) {
+      setDisplayedChars(sentence.length);
+      return;
+    }
+
+    setDisplayedChars(0);
+    const chars = sentence.split("");
+    let currentIndex = 0;
+
+    const interval = setInterval(() => {
+      if (currentIndex < chars.length) {
+        currentIndex++;
+        setDisplayedChars(currentIndex);
+      } else {
+        clearInterval(interval);
+      }
+    }, 50); // 각 글자가 50ms 간격으로 나타남 (느린 속도)
+
+    return () => clearInterval(interval);
+  }, [sentence, isNew]);
+
+  return (
+    <span className="inline-block">
+      {sentence.split("").map((char, index) => (
+        <span
+          key={index}
+          className="inline-block"
+          style={{
+            opacity: index < displayedChars ? 1 : 0,
+            transform:
+              index < displayedChars ? "translateY(0)" : "translateY(10px)",
+            transition:
+              "opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1), transform 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
+            transitionDelay: isNew ? `${index * 0.05}s` : "0s",
+          }}
+        >
+          {char === " " ? "\u00A0" : char}
+        </span>
+      ))}
+    </span>
+  );
+}
 
 interface ClassRoomProps {
   roomId: number;
@@ -67,9 +130,13 @@ export function ClassRoom({
   const [isTranslating, setIsTranslating] = useState(false);
   const [translatedContent, setTranslatedContent] = useState("");
   const [isDragging, setIsDragging] = useState(false);
-  const [translationProgress, setTranslationProgress] = useState<number | null>(null);
+  const [translationProgress, setTranslationProgress] = useState<number | null>(
+    null
+  );
   const [progressToken, setProgressToken] = useState<string | null>(null);
-  const [progressUnsubscribe, setProgressUnsubscribe] = useState<(() => void) | null>(null);
+  const [progressUnsubscribe, setProgressUnsubscribe] = useState<
+    (() => void) | null
+  >(null);
 
   const t = translations[language];
 
@@ -105,35 +172,51 @@ export function ClassRoom({
       try {
         // WebSocket 연결 완료 대기
         await waitForConnection(10000);
-        console.log("[ClassRoom] WebSocket connection confirmed, sending join message");
-        
+        console.log(
+          "[ClassRoom] WebSocket connection confirmed, sending join message"
+        );
+
         // 학생 입장 메시지 전송: /pub/attendance/{roomId} (StudentJoinMessage 형식)
         if (studentInfo) {
           const attendancePublishUrl = `/pub/attendance/${roomId}`; // roomId는 number
-            const joinMessage = {
-              studentId: studentInfo.studentId,
-              studentName: studentInfo.name,
-              language: language,
-            };
-            
-            // 연결이 완료된 후에만 발행
-            const client = getStompClient();
-            if (client && client.active && (client as any).connected) {
-              publishToChannel(attendancePublishUrl, joinMessage);
-              console.log("[ClassRoom] Student join message sent to:", attendancePublishUrl, joinMessage);
-            } else {
-              console.error("[ClassRoom] STOMP client is not connected. Cannot send join message.");
-              // 잠시 후 재시도
-              setTimeout(() => {
-                const retryClient = getStompClient();
-                if (retryClient && retryClient.active && (retryClient as any).connected) {
-                  publishToChannel(attendancePublishUrl, joinMessage);
-                  console.log("[ClassRoom] Student join message sent (retry) to:", attendancePublishUrl, joinMessage);
-                }
-              }, 1000);
-            }
+          const joinMessage = {
+            studentId: studentInfo.studentId,
+            studentName: studentInfo.name,
+            language: language,
+          };
+
+          // 연결이 완료된 후에만 발행
+          const client = getStompClient();
+          if (client && client.active && (client as any).connected) {
+            publishToChannel(attendancePublishUrl, joinMessage);
+            console.log(
+              "[ClassRoom] Student join message sent to:",
+              attendancePublishUrl,
+              joinMessage
+            );
+          } else {
+            console.error(
+              "[ClassRoom] STOMP client is not connected. Cannot send join message."
+            );
+            // 잠시 후 재시도
+            setTimeout(() => {
+              const retryClient = getStompClient();
+              if (
+                retryClient &&
+                retryClient.active &&
+                (retryClient as any).connected
+              ) {
+                publishToChannel(attendancePublishUrl, joinMessage);
+                console.log(
+                  "[ClassRoom] Student join message sent (retry) to:",
+                  attendancePublishUrl,
+                  joinMessage
+                );
+              }
+            }, 1000);
+          }
         }
-        
+
         // subscribeUrl로 구독 (연결 완료까지 자동 대기)
         unsubscribe = await subscribeToChannel(subscribeUrl, (message) => {
           try {
@@ -142,7 +225,10 @@ export function ClassRoom({
 
             // PDF 번역 진행 상황 메시지 처리
             if (data.type === "progress" && data.progress !== undefined) {
-              console.log("[ClassRoom] PDF translation progress:", data.progress);
+              console.log(
+                "[ClassRoom] PDF translation progress:",
+                data.progress
+              );
               setTranslationProgress(data.progress);
               if (data.progress === 100) {
                 toast.success("PDF 번역이 완료되었습니다.");
@@ -153,7 +239,10 @@ export function ClassRoom({
 
             // PDF 번역 완료 메시지 처리 (Blob URL 포함)
             if (data.type === "pdf_complete" && data.pdfUrl) {
-              console.log("[ClassRoom] PDF translation completed, URL:", data.pdfUrl);
+              console.log(
+                "[ClassRoom] PDF translation completed, URL:",
+                data.pdfUrl
+              );
               // 기존 PDF URL이 있으면 해제
               if (pdfUrl) {
                 URL.revokeObjectURL(pdfUrl);
@@ -161,7 +250,9 @@ export function ClassRoom({
               setPdfUrl(data.pdfUrl);
               setIsTranslating(false);
               setTranslationProgress(null);
-              toast.success(`${languageLabels[language]}로 번역이 완료되었습니다.`);
+              toast.success(
+                `${languageLabels[language]}로 번역이 완료되었습니다.`
+              );
               return;
             }
 
@@ -175,12 +266,16 @@ export function ClassRoom({
             // translatedText가 있으면 우선 사용 (백엔드가 번역 처리)
             // targetLanguage가 비어있어도 translatedText가 있으면 표시
             let textToDisplay = data.translatedText || data.originalText || "";
-            
+
             // targetLanguage가 있으면 언어 확인
             if (data.targetLanguage) {
-              const targetLang = data.targetLanguage.toLowerCase().split("-")[0];
-              const normalizedCurrentLang = language.toLowerCase().split("-")[0];
-              
+              const targetLang = data.targetLanguage
+                .toLowerCase()
+                .split("-")[0];
+              const normalizedCurrentLang = language
+                .toLowerCase()
+                .split("-")[0];
+
               console.log("[ClassRoom] Received subtitle:", {
                 targetLanguage: targetLang,
                 currentLanguage: normalizedCurrentLang,
@@ -201,11 +296,17 @@ export function ClassRoom({
             } else if (data.translatedText) {
               // targetLanguage가 없어도 translatedText가 있으면 표시 (백엔드가 번역 처리)
               textToDisplay = data.translatedText;
-              console.log("[ClassRoom] Using translatedText (no targetLanguage specified):", textToDisplay.substring(0, 50));
+              console.log(
+                "[ClassRoom] Using translatedText (no targetLanguage specified):",
+                textToDisplay.substring(0, 50)
+              );
             } else {
               // translatedText도 없으면 originalText 사용
               textToDisplay = data.originalText || "";
-              console.log("[ClassRoom] No translation available, using originalText:", textToDisplay.substring(0, 50));
+              console.log(
+                "[ClassRoom] No translation available, using originalText:",
+                textToDisplay.substring(0, 50)
+              );
             }
 
             // 메시지 추가 (중복 방지: 마지막 메시지와 같으면 추가하지 않음)
@@ -214,10 +315,14 @@ export function ClassRoom({
                 // 마지막 메시지와 같으면 추가하지 않음 (중복 방지)
                 const lastMessage = prev.split("\n\n").pop() || "";
                 if (lastMessage.trim() === textToDisplay.trim()) {
-                  console.log("[ClassRoom] Duplicate message detected, skipping");
+                  console.log(
+                    "[ClassRoom] Duplicate message detected, skipping"
+                  );
                   return prev;
                 }
-                const newContent = prev ? prev + "\n\n" + textToDisplay : textToDisplay;
+                const newContent = prev
+                  ? prev + "\n\n" + textToDisplay
+                  : textToDisplay;
                 return newContent;
               });
             }
@@ -248,7 +353,15 @@ export function ClassRoom({
       // 주의: 다른 컴포넌트에서 사용 중일 수 있으므로 연결 해제하지 않음
       // disconnectStompClient();
     };
-  }, [roomId, isLive, language, wsEndpoint, subscribeUrl, publishUrl, studentInfo]);
+  }, [
+    roomId,
+    isLive,
+    language,
+    wsEndpoint,
+    subscribeUrl,
+    publishUrl,
+    studentInfo,
+  ]);
 
   // 언어 변경 시 번역된 텍스트 재요청 (선택사항)
   useEffect(() => {
@@ -282,12 +395,12 @@ export function ClassRoom({
 
   const handleTranslate = async () => {
     if (!pdfFile) {
-      toast.error('PDF 파일을 선택해주세요.');
+      toast.error("PDF 파일을 선택해주세요.");
       return;
     }
 
     if (!wsEndpoint || !subscribeUrl) {
-      toast.error('WebSocket 연결이 필요합니다.');
+      toast.error("WebSocket 연결이 필요합니다.");
       return;
     }
 
@@ -302,66 +415,77 @@ export function ClassRoom({
 
       // PDF 번역 진행 상황 구독: /sub/rooms/{roomId}/translate/progress
       const progressSubscribeUrl = `/sub/rooms/${roomId}/translate/progress`;
-      const unsubscribeProgress = await subscribeToChannel(progressSubscribeUrl, (message) => {
-        try {
-          const data = JSON.parse(message.body);
-          console.log("[ClassRoom] PDF translation progress:", data);
-          
-          if (data.progress !== undefined) {
-            setTranslationProgress(data.progress);
-            if (data.progress === 100) {
-              toast.success("PDF 번역이 완료되었습니다.");
+      const unsubscribeProgress = await subscribeToChannel(
+        progressSubscribeUrl,
+        (message) => {
+          try {
+            const data = JSON.parse(message.body);
+            console.log("[ClassRoom] PDF translation progress:", data);
+
+            if (data.progress !== undefined) {
+              setTranslationProgress(data.progress);
+              if (data.progress === 100) {
+                toast.success("PDF 번역이 완료되었습니다.");
+                setTranslationProgress(null);
+                if (unsubscribeProgress) {
+                  unsubscribeProgress();
+                }
+              }
+            }
+
+            // PDF 완료 메시지 처리
+            if (data.type === "pdf_complete" && data.pdfUrl) {
+              if (pdfUrl) {
+                URL.revokeObjectURL(pdfUrl);
+              }
+              setPdfUrl(data.pdfUrl);
+              setIsTranslating(false);
               setTranslationProgress(null);
               if (unsubscribeProgress) {
                 unsubscribeProgress();
               }
             }
+          } catch (error) {
+            console.error(
+              "[ClassRoom] Failed to parse progress message:",
+              error
+            );
           }
-          
-          // PDF 완료 메시지 처리
-          if (data.type === "pdf_complete" && data.pdfUrl) {
-            if (pdfUrl) {
-              URL.revokeObjectURL(pdfUrl);
-            }
-            setPdfUrl(data.pdfUrl);
-            setIsTranslating(false);
-            setTranslationProgress(null);
-            if (unsubscribeProgress) {
-              unsubscribeProgress();
-            }
-          }
-        } catch (error) {
-          console.error("[ClassRoom] Failed to parse progress message:", error);
         }
-      });
+      );
       setProgressUnsubscribe(() => unsubscribeProgress);
 
       // PDF 번역 요청 발행: /pub/translate/pdf/{roomId}
       const translatePublishUrl = `/pub/translate/pdf/${roomId}`;
-      const progressToken = `pdf_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const progressToken = `pdf_${Date.now()}_${Math.random()
+        .toString(36)
+        .substr(2, 9)}`;
       setProgressToken(progressToken);
 
       publishToChannel(translatePublishUrl, {
         filename: pdfFile.name,
         language: language,
-        mode: 'chat',
+        mode: "chat",
         progressToken: progressToken,
       });
-      console.log("[ClassRoom] PDF translation request published:", translatePublishUrl);
+      console.log(
+        "[ClassRoom] PDF translation request published:",
+        translatePublishUrl
+      );
 
       // PDF 파일을 FormData로 전송
       const formData = new FormData();
-      formData.append('file', pdfFile);
-      formData.append('language', language);
-      formData.append('mode', 'chat');
-      formData.append('filename', pdfFile.name);
-      formData.append('progressToken', progressToken);
+      formData.append("file", pdfFile);
+      formData.append("language", language);
+      formData.append("mode", "chat");
+      formData.append("filename", pdfFile.name);
+      formData.append("progressToken", progressToken);
 
       // PDF 번역 API 호출 (백엔드가 WebSocket으로 진행 상황을 보내고, 완료 시 PDF를 반환)
       const translatedPdfBlob = await translatePdf({
         file: pdfFile,
         language: language,
-        mode: 'chat',
+        mode: "chat",
         filename: pdfFile.name,
         progressToken: progressToken,
       });
@@ -369,19 +493,25 @@ export function ClassRoom({
       // WebSocket으로 진행 상황을 받지 못한 경우 폴백: 직접 Blob 처리
       if (translatedPdfBlob && translatedPdfBlob.size > 0) {
         const translatedPdfUrl = URL.createObjectURL(translatedPdfBlob);
-        
+
         if (pdfUrl) {
           URL.revokeObjectURL(pdfUrl);
         }
-        
+
         setPdfUrl(translatedPdfUrl);
-        setPdfFile(new File([translatedPdfBlob], `translated_${pdfFile.name}`, { type: 'application/pdf' }));
+        setPdfFile(
+          new File([translatedPdfBlob], `translated_${pdfFile.name}`, {
+            type: "application/pdf",
+          })
+        );
         setTranslationProgress(null);
         toast.success(`${languageLabels[language]}로 번역이 완료되었습니다.`);
       }
     } catch (error) {
-      console.error('PDF 번역 실패:', error);
-      toast.error(error instanceof Error ? error.message : 'PDF 번역에 실패했습니다.');
+      console.error("PDF 번역 실패:", error);
+      toast.error(
+        error instanceof Error ? error.message : "PDF 번역에 실패했습니다."
+      );
       setTranslationProgress(null);
     } finally {
       setIsTranslating(false);
@@ -399,11 +529,11 @@ export function ClassRoom({
         <div className="flex items-center gap-4">
           <Button
             variant="ghost"
-            size="sm"
+            size="default"
             onClick={onExit}
-            className="hover:bg-gray-100"
+            className="hover:bg-gray-100 px-4 py-2"
           >
-            <ArrowLeft className="w-4 h-4 mr-2" />
+            <ArrowLeft className="w-5 h-5 mr-2" />
             {t.exit}
           </Button>
           <div className="flex-1">
@@ -443,16 +573,46 @@ export function ClassRoom({
               onDragLeave={!pdfFile ? handleDragLeave : undefined}
               onDrop={!pdfFile ? handleDrop : undefined}
             >
-              <Textarea
-                readOnly
-                value={translatedContent}
-                placeholder={t.classContent}
-                className={`min-h-[600px] resize-none border-2 rounded-xl p-4 text-gray-700 cursor-default ${
+              <div
+                className={`min-h-[600px] border-2 rounded-xl p-6 text-gray-700 cursor-default overflow-y-auto ${
                   isDragging && !pdfFile
                     ? "border-indigo-500 bg-indigo-50/50"
                     : "border-gray-200 bg-gray-50"
                 }`}
-              />
+              >
+                {translatedContent ? (
+                  <div className="space-y-3">
+                    {translatedContent
+                      .split("\n")
+                      .filter((s) => s.trim().length > 0)
+                      .map((sentence, index, arr) => {
+                        // 마지막 문장인지 확인 (새로 추가된 문장인지 판단)
+                        const isLastSentence = index === arr.length - 1;
+                        return (
+                          <div
+                            key={`${sentence}-${index}`}
+                            className="text-lg leading-relaxed"
+                            style={{
+                              animation: `fadeInUp 0.3s ease-out ${Math.min(
+                                index * 0.05,
+                                1
+                              )}s both`,
+                            }}
+                          >
+                            <AnimatedSentence
+                              sentence={sentence.trim()}
+                              isNew={isLastSentence}
+                            />
+                          </div>
+                        );
+                      })}
+                  </div>
+                ) : (
+                  <p className="text-gray-400 text-center mt-20">
+                    {t.classContent}
+                  </p>
+                )}
+              </div>
               {!pdfFile && (
                 <div className="mt-4 text-center">
                   <p className="text-sm text-gray-400 flex items-center justify-center gap-2">
@@ -539,12 +699,12 @@ export function ClassRoom({
                       </>
                     )}
                   </Button>
-                  
+
                   {pdfUrl && (
                     <Button
                       onClick={() => {
                         if (pdfUrl && pdfFile) {
-                          const link = document.createElement('a');
+                          const link = document.createElement("a");
                           link.href = pdfUrl;
                           link.download = pdfFile.name;
                           document.body.appendChild(link);

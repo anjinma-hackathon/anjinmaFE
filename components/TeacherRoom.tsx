@@ -552,7 +552,7 @@ export function TeacherRoom({
               </button>
 
               <p className="text-slate-600">
-                {isRecording ? "녹음 중..." : "녹음 시작"}
+                {isRecording ? "정지" : "강의 시작"}
               </p>
             </div>
           </div>
