@@ -312,7 +312,7 @@ export default function StudentPage() {
       {/* 헤더 */}
       <div className="bg-white shadow-sm px-8 py-5 backdrop-blur-sm bg-white/80 sticky top-0 z-10">
         <div className="flex items-center justify-between">
-          <h1 className="text-2xl text-gray-900">TransClass 학생용</h1>
+          <h1 className="text-2xl text-gray-900">ClassOnAir 학생용</h1>
           <Select value={selectedLanguage} onValueChange={(val) => setSelectedLanguage(val as Language)}>
             <SelectTrigger className="w-[140px] h-10 border-2 border-indigo-200 focus:border-indigo-400 text-base">
               <SelectValue />
